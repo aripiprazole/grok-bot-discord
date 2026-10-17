@@ -5,6 +5,9 @@
   "description": "Cursor / Grok Bot plugin: Discord tools, an always-on Discord presence that answers with Grok, and voice calls.",
   "type": "module",
   "license": "MIT",
+  "bin": {
+    "grok-bot-discord": "server/index.mjs"
+  },
   "engines": {
     "node": ">=22.12"
   },

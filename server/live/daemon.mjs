@@ -82,8 +82,11 @@ for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => shutdown(
 // Exit if the plugin was uninstalled (its files are gone).
 setInterval(() => existsSync(SELF) || shutdown("plugin removed"), UNINSTALL_CHECK_MS).unref();
 
-// Settings problems won't fix themselves; anything else (network, Discord outage) is retried.
-const FATAL = /token|intent|Node\.js|npm/i;
+// A bad token or an old Node.js won't fix itself (new settings restart this process anyway).
+// Anything else is retried: network trouble, a Discord outage, or the Message Content Intent
+// being off, which people fix in the Developer Portal while this keeps checking.
+const FATAL = /token|Node\.js|npm/i;
+const INTENT_RETRY_MS = 20_000;
 
 for (let delay = 15_000; ; delay = Math.min(delay * 2, 5 * 60_000)) {
   try {
@@ -102,6 +105,6 @@ for (let delay = 15_000; ; delay = Math.min(delay * 2, 5 * 60_000)) {
     state.error = err.message;
     log.error(err.stack ?? err.message);
     if (FATAL.test(err.message)) break;
-    await new Promise((resolve) => setTimeout(resolve, delay));
+    await new Promise((resolve) => setTimeout(resolve, /intent/i.test(err.message) ? INTENT_RETRY_MS : delay));
   }
 }
