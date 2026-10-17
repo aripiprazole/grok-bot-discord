@@ -47,6 +47,19 @@ Prefer instant, memory-less replies? Set `REPLY_MODE=instant` and an xAI key, an
 | `LISTEN_CHANNEL_IDS` | no | Channels where every message reaches the agent, not only @mentions |
 | `DISCORD_DEFAULT_CHANNEL_ID` | no | Where the agent posts when you don't name a channel |
 
+## Without the marketplace (personal Grok Bots, any agent with a shell)
+
+The same package works as a command-line tool. A personal Grok Bot can use it from its own computer:
+
+```sh
+npm install -g github:aripiprazole/grok-bot-discord   # or prefix each command with: npx -y github:aripiprazole/grok-bot-discord
+mkdir -p ~/.discord-bot-plugin && printf 'DISCORD_BOT_TOKEN=...\nXAI_API_KEY=...\n' > ~/.discord-bot-plugin/.env && chmod 600 ~/.discord-bot-plugin/.env
+grok-bot-discord discord_status
+grok-bot-discord check_discord_inbox
+grok-bot-discord reply_on_discord '{"item_id":"3f9a1c2e","content":"On it!"}'
+grok-bot-discord help   # every tool and its arguments
+```
+
 ## Tools
 
 | Tool | |
