@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Discord Bot plugin">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4F46E5"/>
+      <stop offset="1" stop-color="#7C3AED"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="56" fill="url(#bg)"/>
+  <path d="M66 60H190A22 22 0 0 1 212 82V154A22 22 0 0 1 190 176H118L78 206V176H66A22 22 0 0 1 44 154V82A22 22 0 0 1 66 60Z" fill="#FFFFFF"/>
+  <g fill="none" stroke="#4F46E5" stroke-width="14" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M90 98L118 118L90 138"/>
+    <path d="M132 140H168"/>
+  </g>
+</svg>

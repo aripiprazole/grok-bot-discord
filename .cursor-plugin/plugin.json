@@ -1,0 +1,75 @@
+{
+  "name": "discord-bot",
+  "displayName": "Discord Bot",
+  "version": "0.2.0",
+  "minClientVersions": {
+    "cursor": "3.13.0"
+  },
+  "description": "Bring your bot to Discord: it answers @mentions, DMs and threads with Grok, joins voice calls to talk, and gives the agent tools to read channels, post updates, reply, react and start threads.",
+  "author": {
+    "name": "aripiprazole"
+  },
+  "homepage": "https://github.com/aripiprazole/grok-bot-discord",
+  "repository": "https://github.com/aripiprazole/grok-bot-discord",
+  "license": "MIT",
+  "logo": "assets/logo.svg",
+  "keywords": [
+    "discord",
+    "chat",
+    "voice",
+    "bot",
+    "grok",
+    "notifications",
+    "mcp"
+  ],
+  "category": "integrations",
+  "tags": [
+    "discord",
+    "communication",
+    "voice",
+    "mcp"
+  ],
+  "variables": {
+    "type": "object",
+    "properties": {
+      "DISCORD_BOT_TOKEN": {
+        "type": "string",
+        "title": "Discord bot token",
+        "description": "From https://discord.com/developers/applications → your application → Bot → Reset Token. Also turn on Message Content Intent on that page.",
+        "writeOnly": true,
+        "format": "password",
+        "minLength": 1
+      },
+      "XAI_API_KEY": {
+        "type": "string",
+        "title": "xAI API key",
+        "description": "From https://console.x.ai → API Keys. Used to answer messages and talk in voice calls with Grok.",
+        "writeOnly": true,
+        "format": "password",
+        "minLength": 1
+      },
+      "DISCORD_DEFAULT_CHANNEL_ID": {
+        "type": "string",
+        "title": "Default channel ID (optional)",
+        "description": "Channel the agent posts to when you don't name one. In Discord, turn on Developer Mode, then right-click a channel → Copy Channel ID."
+      },
+      "ALLOWED_IDS": {
+        "type": "string",
+        "title": "Who can talk to the bot (optional)",
+        "description": "Comma-separated Discord user or role IDs. Leave empty to let everyone who can see the bot use it (replies use your xAI credits)."
+      },
+      "LISTEN_CHANNEL_IDS": {
+        "type": "string",
+        "title": "Always-reply channels (optional)",
+        "description": "Comma-separated channel IDs where the bot answers every message, not only @mentions."
+      }
+    },
+    "required": [
+      "DISCORD_BOT_TOKEN",
+      "XAI_API_KEY"
+    ]
+  },
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": "./mcp.json"
+}

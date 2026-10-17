@@ -1,0 +1,22 @@
+{
+  "name": "discord-bot-cursor-plugin",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Cursor / Grok Bot plugin: Discord tools, an always-on Discord presence that answers with Grok, and voice calls.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "start": "node server/index.mjs",
+    "test": "node --test \"test/*.test.mjs\""
+  },
+  "dependencies": {
+    "@discordjs/voice": "^0.19.2",
+    "discord.js": "^14.27.0",
+    "opusscript": "^0.0.8",
+    "prism-media": "^1.3.5",
+    "ws": "^8.22.0"
+  }
+}

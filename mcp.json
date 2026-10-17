@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "discord": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "${CURSOR_PLUGIN_ROOT}/server/index.mjs"
+      ],
+      "env": {
+        "DISCORD_BOT_TOKEN": "${DISCORD_BOT_TOKEN}",
+        "XAI_API_KEY": "${XAI_API_KEY}",
+        "DISCORD_DEFAULT_CHANNEL_ID": "${DISCORD_DEFAULT_CHANNEL_ID:-}",
+        "ALLOWED_IDS": "${ALLOWED_IDS:-}",
+        "LISTEN_CHANNEL_IDS": "${LISTEN_CHANNEL_IDS:-}"
+      }
+    }
+  }
+}
