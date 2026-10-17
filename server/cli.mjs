@@ -7,6 +7,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createLiveClient } from "./live/client.mjs";
+import { resolveSecretRefs } from "./secrets.mjs";
 import { SERVER_INFO } from "./server.mjs";
 import { TOOLS, callTool, createToolContext, hasTool, loadConfig } from "./tools.mjs";
 
@@ -23,8 +24,8 @@ function usage() {
     `grok-bot-discord ${SERVER_INFO.version}: Discord for agents.`,
     "",
     "Usage: grok-bot-discord <tool> ['{\"json\":\"arguments\"}' | -]   (- reads the JSON from stdin)",
-    `Settings: DISCORD_BOT_TOKEN (required), XAI_API_KEY, REPLY_MODE, ROUTINE_WEBHOOK_URL/KEY, ALLOWED_IDS, LISTEN_CHANNEL_IDS`,
-    `          from the environment or ${CONFIG_FILE}`,
+    `Settings: DISCORD_BOT_TOKEN (required), XAI_API_KEY, REPLY_MODE, ROUTINE_WEBHOOK_URL/KEY, ALLOWED_IDS, ALLOWED_CHANNEL_IDS, LISTEN_CHANNEL_IDS`,
+    `          from the environment or ${CONFIG_FILE}. Values may be 1Password references (op://vault/item/field).`,
     "",
     "Tools:",
   ];
@@ -46,6 +47,12 @@ export async function run(command, args) {
   if (!hasTool(command)) {
     console.error(`Unknown tool "${command}". Run "grok-bot-discord help" for the list.`);
     return 2;
+  }
+  try {
+    Object.assign(process.env, resolveSecretRefs(process.env));
+  } catch (err) {
+    console.error(err.message);
+    return 1;
   }
   let params;
   try {

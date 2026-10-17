@@ -3,7 +3,7 @@
 
 import { ChannelType, ThreadAutoArchiveDuration } from "discord.js";
 import { chunkMessage } from "../format.mjs";
-import { isAllowed } from "./config.mjs";
+import { channelAllowed, isAllowed } from "./config.mjs";
 import { ERROR_PREFIX, buildInstructions, formatReply, respondMode, threadName, toInput } from "./conversation.mjs";
 
 const TYPING_REFRESH_MS = 8_000;
@@ -114,6 +114,7 @@ export function createChatHandler({ client, config, grok, agentInbox, followedTh
 
   return async function onMessage(message) {
     if (message.author.bot || message.system) return;
+    if (!channelAllowed(message.channel, config)) return;
     const me = client.user.id;
     const { channel } = message;
     const mode = respondMode(

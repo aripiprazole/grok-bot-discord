@@ -15,6 +15,8 @@ export function loadLiveConfig(env = process.env) {
     routineWebhook: { url: setting(env.ROUTINE_WEBHOOK_URL), key: setting(env.ROUTINE_WEBHOOK_KEY) },
     // User or role IDs allowed to talk to the bot; empty means everyone.
     allowedIds: new Set(list(env.ALLOWED_IDS)),
+    // If set, the bot ignores server channels not listed here (threads count by their parent). DMs aren't affected.
+    allowedChannelIds: new Set(list(env.ALLOWED_CHANNEL_IDS)),
     // Channels where the bot answers every message, not only @mentions.
     listenChannelIds: new Set(list(env.LISTEN_CHANNEL_IDS)),
     model: setting(env.GROK_MODEL) ?? "grok-4.7",
@@ -40,8 +42,20 @@ export const effectiveReplyMode = (config) => (config.replyMode === "instant" &&
 
 // Changes when anything the background process depends on changes, so it can be restarted.
 export function configHash(config, version) {
-  const plain = { ...config, allowedIds: [...config.allowedIds].sort(), listenChannelIds: [...config.listenChannelIds].sort(), version };
+  const plain = {
+    ...config,
+    allowedIds: [...config.allowedIds].sort(),
+    allowedChannelIds: [...config.allowedChannelIds].sort(),
+    listenChannelIds: [...config.listenChannelIds].sort(),
+    version,
+  };
   return createHash("sha256").update(JSON.stringify(plain)).digest("hex").slice(0, 16);
+}
+
+// Whether the bot may act in this channel (a thread is judged by its parent channel).
+export function channelAllowed(channel, config) {
+  if (!config.allowedChannelIds.size || !channel.guild) return true;
+  return config.allowedChannelIds.has(channel.id) || (channel.parentId != null && config.allowedChannelIds.has(channel.parentId));
 }
 
 export function isAllowed(userId, roleIds, config) {

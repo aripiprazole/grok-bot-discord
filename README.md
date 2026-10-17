@@ -44,6 +44,7 @@ Prefer instant, memory-less replies? Set `REPLY_MODE=instant` and an xAI key, an
 | `REPLY_MODE` | no | `agent` (default): your agent answers with its memory. `instant`: Grok answers right away. |
 | `ROUTINE_WEBHOOK_URL`, `ROUTINE_WEBHOOK_KEY` | no | Your wake-up routine's webhook. The agent can also save these itself with `connect_discord_routine`. |
 | `ALLOWED_IDS` | no | Comma-separated Discord user or role IDs allowed to talk to the bot. Leave it empty to allow everyone. |
+| `ALLOWED_CHANNEL_IDS` | no | Channels the bot works in. It ignores other server channels; threads count by their parent channel, and DMs aren't affected. |
 | `LISTEN_CHANNEL_IDS` | no | Channels where every message reaches the agent, not only @mentions |
 | `DISCORD_DEFAULT_CHANNEL_ID` | no | Where the agent posts when you don't name a channel |
 
@@ -59,6 +60,8 @@ grok-bot-discord check_discord_inbox
 grok-bot-discord reply_on_discord '{"item_id":"3f9a1c2e","content":"On it!"}'
 grok-bot-discord help   # every tool and its arguments
 ```
+
+**1Password:** any setting can be a secret reference like `op://Vault/Item/field`. It's read once at startup with the 1Password CLI (`op read`). Set `OP_CLI_PATH` if `op` isn't on `PATH`.
 
 ## Tools
 

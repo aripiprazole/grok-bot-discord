@@ -14,7 +14,7 @@ import {
 import { ChannelType, InteractionContextType, MessageFlags, SlashCommandBuilder } from "discord.js";
 import prism from "prism-media";
 import { chunkMessage } from "../../format.mjs";
-import { isAllowed } from "../config.mjs";
+import { channelAllowed, isAllowed } from "../config.mjs";
 import { FRAME_MS, createUpmixer } from "./audio.mjs";
 import { VoiceBridge, sessionConfig } from "./bridge.mjs";
 import { connectRealtime } from "./realtime.mjs";
@@ -202,6 +202,7 @@ export function createVoiceManager({ client, config, getPersona = () => null, lo
   async function joinChannel({ channel, hostId = null, listen = hostId ? "me" : "everyone", persona = getPersona() }) {
     if (!config.xaiApiKey) throw new Error("Voice calls need an xAI API key: set XAI_API_KEY in the plugin settings.");
     if (channel.type !== ChannelType.GuildVoice) throw new Error("I can only join regular voice channels.");
+    if (!channelAllowed(channel, config)) throw new Error(`#${channel.name} isn't in this bot's allowed channels (ALLOWED_CHANNEL_IDS).`);
     if (!channel.joinable || !channel.speakable) throw new Error(`I need the Connect and Speak permissions in #${channel.name}.`);
     sessions.get(channel.guild.id)?.stop(null);
     const session = new VoiceSession({

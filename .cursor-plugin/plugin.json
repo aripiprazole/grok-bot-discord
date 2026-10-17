@@ -35,7 +35,7 @@
       "DISCORD_BOT_TOKEN": {
         "type": "string",
         "title": "Discord bot token",
-        "description": "From https://discord.com/developers/applications → your application → Bot → Reset Token. Also turn on Message Content Intent on that page.",
+        "description": "From https://discord.com/developers/applications → your application → Bot → Reset Token. Also turn on Message Content Intent on that page. You can also enter a 1Password reference (op://vault/item/field) if the 1Password CLI is set up.",
         "writeOnly": true,
         "format": "password",
         "minLength": 1
@@ -78,6 +78,11 @@
         "type": "string",
         "title": "Who can talk to the bot (optional)",
         "description": "Comma-separated Discord user or role IDs. Leave empty to let everyone who can see the bot use it (replies use your xAI credits)."
+      },
+      "ALLOWED_CHANNEL_IDS": {
+        "type": "string",
+        "title": "Allowed channels (optional)",
+        "description": "Comma-separated channel IDs the bot works in; it ignores other server channels (threads count by their parent channel). Leave empty for all channels. DMs aren't affected."
       },
       "LISTEN_CHANNEL_IDS": {
         "type": "string",

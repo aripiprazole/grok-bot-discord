@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { configHash, loadLiveConfig, missingSettings } from "./config.mjs";
 import { installDependencies, nodeTooOld } from "./deps.mjs";
 import { claim, livePaths } from "./ipc.mjs";
+import { resolveSecretRefs } from "../secrets.mjs";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const SELF = fileURLToPath(import.meta.url);
@@ -21,7 +22,14 @@ const log = {
   error: (...args) => console.error(stamp(), "error:", ...args),
 };
 
-const config = loadLiveConfig(process.env);
+let env;
+try {
+  env = resolveSecretRefs(process.env); // already resolved when started by the plugin; needed for npm run dev
+} catch (err) {
+  log.error(err.message);
+  process.exit(1);
+}
+const config = loadLiveConfig(env);
 const problem = missingSettings(config);
 if (problem) {
   log.error(problem);
