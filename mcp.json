@@ -8,7 +8,10 @@
       ],
       "env": {
         "DISCORD_BOT_TOKEN": "${DISCORD_BOT_TOKEN}",
-        "XAI_API_KEY": "${XAI_API_KEY}",
+        "XAI_API_KEY": "${XAI_API_KEY:-}",
+        "REPLY_MODE": "${REPLY_MODE:-agent}",
+        "ROUTINE_WEBHOOK_URL": "${ROUTINE_WEBHOOK_URL:-}",
+        "ROUTINE_WEBHOOK_KEY": "${ROUTINE_WEBHOOK_KEY:-}",
         "DISCORD_DEFAULT_CHANNEL_ID": "${DISCORD_DEFAULT_CHANNEL_ID:-}",
         "ALLOWED_IDS": "${ALLOWED_IDS:-}",
         "LISTEN_CHANNEL_IDS": "${LISTEN_CHANNEL_IDS:-}"

@@ -10,13 +10,15 @@ The `discord` MCP server provides:
 - **Status:** `discord_status` shows whether the bot is online, which servers it's in, active calls, an invite link, and setup problems.
 - **Text:** `list_servers`, `list_channels`, `read_messages`, `send_message`, `edit_message`, `add_reaction`, `create_thread`.
 - **Voice:** `join_voice_channel`, `leave_voice_channel`.
+- **Inbox:** `check_discord_inbox`, `reply_on_discord`, `skip_discord_message`. When people @mention you, DM you or write in your threads, their messages wait here (marked 👀) for you to answer as yourself. The `discord-inbox` skill handles this, and `discord-setup` creates the routine that runs it.
+- **Persona:** `set_discord_persona` saves who you are for voice calls.
 
-The bot also stays online by itself. It answers @mentions, DMs and threads in Discord, and people can run `/join` and `/leave` there. You don't need to relay those messages.
+The bot stays online by itself, and people can run `/join` and `/leave` in Discord.
 
 ## Setup questions
 
 - "Is it working?" or "How do I add it to my server?": call `discord_status`. It prints the invite link and any problem, such as a missing setting, a bad token, or Message Content Intent being off.
-- Settings live in the plugin's configuration: `DISCORD_BOT_TOKEN`, `XAI_API_KEY`, and optionally `ALLOWED_IDS`, `LISTEN_CHANNEL_IDS`, `DISCORD_DEFAULT_CHANNEL_ID`.
+- Settings live in the plugin's configuration: `DISCORD_BOT_TOKEN` (required), `XAI_API_KEY` (voice calls and instant replies), `REPLY_MODE`, `ALLOWED_IDS`, `LISTEN_CHANNEL_IDS`, `DISCORD_DEFAULT_CHANNEL_ID`.
 
 ## Find the right place
 

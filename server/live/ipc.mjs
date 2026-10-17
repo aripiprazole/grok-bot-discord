@@ -4,14 +4,16 @@
 import { createHash } from "node:crypto";
 import { unlinkSync } from "node:fs";
 import net from "node:net";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-export function livePaths(token, dir = tmpdir()) {
+export function livePaths(token, dir = tmpdir(), home = homedir()) {
   const id = createHash("sha256").update(token).digest("hex").slice(0, 16);
   return {
     socket: process.platform === "win32" ? `\\\\.\\pipe\\discord-bot-${id}` : join(dir, `discord-bot-${id}.sock`),
     log: join(dir, `discord-bot-${id}.log`),
+    // Inbox and persona survive restarts, so they live outside the temp folder.
+    data: join(home, ".discord-bot-plugin", id),
   };
 }
 

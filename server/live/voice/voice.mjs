@@ -41,11 +41,12 @@ export const VOICE_COMMANDS = [
   new SlashCommandBuilder().setName("leave").setDescription("Make Grok leave the voice channel").setContexts(InteractionContextType.Guild),
 ].map((command) => command.toJSON());
 
-function voiceInstructions({ botName, listen, extra }) {
+function voiceInstructions({ botName, listen, persona, extra }) {
   return [
-    `You are ${botName}, powered by Grok, talking in a Discord voice call${listen === "everyone" ? " that may include several people" : ""}.`,
+    persona ? `You are ${botName}. ${persona}` : `You are ${botName}, powered by Grok.`,
+    `You're talking in a Discord voice call${listen === "everyone" ? " that may include several people" : ""}.`,
     "Speak naturally and keep replies short (one to three sentences) unless someone asks for detail.",
-    "You only hear the call; you can't see the screen or the text chat.",
+    "You only hear the call; you can't see the screen or the text chat. Stay in character.",
     extra,
   ]
     .filter(Boolean)
@@ -53,8 +54,8 @@ function voiceInstructions({ botName, listen, extra }) {
 }
 
 class VoiceSession {
-  constructor({ channel, hostId, listen, config, botName, log, onEnd }) {
-    Object.assign(this, { channel, hostId, listen, config, botName, log, onEnd });
+  constructor({ channel, hostId, listen, persona, config, botName, log, onEnd }) {
+    Object.assign(this, { channel, hostId, listen, persona, config, botName, log, onEnd });
     this.streams = new Map();
     this.upmix = createUpmixer();
     this.out = null;
@@ -92,7 +93,7 @@ class VoiceSession {
       model: config.voice.model,
       session: sessionConfig({
         voice: config.voice.voice,
-        instructions: voiceInstructions({ botName: this.botName, listen: this.listen, extra: config.systemPrompt }),
+        instructions: voiceInstructions({ botName: this.botName, listen: this.listen, persona: this.persona, extra: config.systemPrompt }),
         tools: config.tools,
       }),
       onEvent: (event) => this.bridge.handleEvent(event),
@@ -194,11 +195,12 @@ class VoiceSession {
   }
 }
 
-export function createVoiceManager({ client, config, log = console }) {
+export function createVoiceManager({ client, config, getPersona = () => null, log = console }) {
   const sessions = new Map(); // guild id → VoiceSession
 
   // Joins `channel`, listening to everyone or only `hostId`. Throws with a readable message on failure.
-  async function joinChannel({ channel, hostId = null, listen = hostId ? "me" : "everyone" }) {
+  async function joinChannel({ channel, hostId = null, listen = hostId ? "me" : "everyone", persona = getPersona() }) {
+    if (!config.xaiApiKey) throw new Error("Voice calls need an xAI API key: set XAI_API_KEY in the plugin settings.");
     if (channel.type !== ChannelType.GuildVoice) throw new Error("I can only join regular voice channels.");
     if (!channel.joinable || !channel.speakable) throw new Error(`I need the Connect and Speak permissions in #${channel.name}.`);
     sessions.get(channel.guild.id)?.stop(null);
@@ -206,6 +208,7 @@ export function createVoiceManager({ client, config, log = console }) {
       channel,
       hostId,
       listen,
+      persona,
       config,
       botName: client.user.username,
       log,

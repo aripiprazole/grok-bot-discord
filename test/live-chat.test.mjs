@@ -1,14 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { configHash, isAllowed, loadLiveConfig, missingSettings } from "../server/live/config.mjs";
+import { configHash, effectiveReplyMode, isAllowed, loadLiveConfig, missingSettings } from "../server/live/config.mjs";
 import { buildInstructions, formatReply, respondMode, threadName, toInput } from "../server/live/conversation.mjs";
 import { createGrok, parseResponse } from "../server/live/grok.mjs";
 
 const ENV = { DISCORD_BOT_TOKEN: "d", XAI_API_KEY: "x" };
 
 test("live config reads plugin variables and ignores unset placeholders", () => {
-  assert.equal(missingSettings(loadLiveConfig({ DISCORD_BOT_TOKEN: "${DISCORD_BOT_TOKEN}" })), "Set DISCORD_BOT_TOKEN and XAI_API_KEY in the plugin settings.");
-  assert.equal(missingSettings(loadLiveConfig(ENV)), null);
+  assert.equal(missingSettings(loadLiveConfig({ DISCORD_BOT_TOKEN: "${DISCORD_BOT_TOKEN}" })), "Set DISCORD_BOT_TOKEN in the plugin settings.");
+  assert.equal(missingSettings(loadLiveConfig({ DISCORD_BOT_TOKEN: "t" })), null, "the xAI key is optional");
+  assert.equal(effectiveReplyMode(loadLiveConfig({ DISCORD_BOT_TOKEN: "t" })), "agent");
+  assert.equal(effectiveReplyMode(loadLiveConfig({ ...ENV, REPLY_MODE: "Instant" })), "instant");
+  assert.equal(effectiveReplyMode(loadLiveConfig({ DISCORD_BOT_TOKEN: "t", REPLY_MODE: "instant" })), "agent", "instant needs a key");
   const c = loadLiveConfig({ ...ENV, ALLOWED_IDS: "1, 2 3,", LISTEN_CHANNEL_IDS: "" });
   assert.deepEqual([...c.allowedIds], ["1", "2", "3"]);
   assert.equal(c.listenChannelIds.size, 0);

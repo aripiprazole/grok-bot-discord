@@ -38,6 +38,11 @@ async function shutdown(reason) {
   process.exit(0);
 }
 
+function ready() {
+  if (!gateway) throw new Error(`The Discord connection isn't ready (${state.status}${state.error ? `: ${state.error}` : ""}).`);
+  return gateway;
+}
+
 async function handle(method, params) {
   switch (method) {
     case "ping":
@@ -45,11 +50,19 @@ async function handle(method, params) {
     case "status":
       return { ...state, ...(gateway ? gateway.status() : {}) };
     case "join":
-      if (!gateway) throw new Error(`The Discord connection isn't ready (${state.status}${state.error ? `: ${state.error}` : ""}).`);
-      return gateway.join(params);
+      return ready().join(params);
     case "leave":
-      if (!gateway) throw new Error("The Discord connection isn't ready.");
-      return gateway.leave(params);
+      return ready().leave(params);
+    case "inbox.check":
+      return ready().inbox.check(params);
+    case "inbox.reply":
+      return ready().inbox.reply(params);
+    case "inbox.skip":
+      return ready().inbox.skip(params);
+    case "persona.set":
+      return ready().setPersona(params);
+    case "routine.set":
+      return ready().setRoutineWebhook(params);
     case "shutdown":
       setTimeout(() => shutdown(params.reason ?? "requested"), 50);
       return "ok";
@@ -80,7 +93,7 @@ for (let delay = 15_000; ; delay = Math.min(delay * 2, 5 * 60_000)) {
     await installDependencies(ROOT, log);
     state.status = "connecting to Discord";
     const { startGateway } = await import("./gateway.mjs");
-    gateway = await startGateway({ config, log });
+    gateway = await startGateway({ config, dataDir: paths.data, log });
     state.status = "online";
     state.error = null;
     break;

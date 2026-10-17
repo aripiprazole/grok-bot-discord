@@ -68,13 +68,13 @@ test("live client starts the background process, and restarts it when settings c
   assert.equal(launches, 2, "new settings → new process");
   for (const s of servers) s.close();
 
-  const off = createLiveClient({ env: { DISCORD_BOT_TOKEN: "t" }, version: "1", spawnImpl, log: quiet });
-  assert.equal(off.disabled, "Set XAI_API_KEY in the plugin settings.");
-  await assert.rejects(off.call("status"), /XAI_API_KEY/);
+  const off = createLiveClient({ env: { XAI_API_KEY: "x" }, version: "1", spawnImpl, log: quiet });
+  assert.equal(off.disabled, "Set DISCORD_BOT_TOKEN in the plugin settings.");
+  await assert.rejects(off.call("status"), /DISCORD_BOT_TOKEN/);
 });
 
 test("background process refuses to start without settings", () => {
   const run = spawnSync(process.execPath, [DAEMON], { env: { PATH: process.env.PATH }, encoding: "utf8", timeout: 10_000 });
   assert.equal(run.status, 1);
-  assert.match(run.stderr, /Set DISCORD_BOT_TOKEN and XAI_API_KEY/);
+  assert.match(run.stderr, /Set DISCORD_BOT_TOKEN/);
 });

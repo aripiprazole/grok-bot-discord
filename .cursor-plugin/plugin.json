@@ -1,11 +1,11 @@
 {
   "name": "discord-bot",
   "displayName": "Discord Bot",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "minClientVersions": {
     "cursor": "3.13.0"
   },
-  "description": "Bring your bot to Discord: it answers @mentions, DMs and threads with Grok, joins voice calls to talk, and gives the agent tools to read channels, post updates, reply, react and start threads.",
+  "description": "Put your agents on Discord as themselves: they answer @mentions, DMs and threads with their own memory and tools (a routine wakes them), join voice calls, and can read channels, post, reply, react and start threads.",
   "author": {
     "name": "aripiprazole"
   },
@@ -42,11 +42,32 @@
       },
       "XAI_API_KEY": {
         "type": "string",
-        "title": "xAI API key",
-        "description": "From https://console.x.ai → API Keys. Used to answer messages and talk in voice calls with Grok.",
+        "title": "xAI API key (for voice calls)",
+        "description": "Optional. From https://console.x.ai → API Keys. Needed for voice calls (/join) and for instant replies.",
         "writeOnly": true,
-        "format": "password",
-        "minLength": 1
+        "format": "password"
+      },
+      "REPLY_MODE": {
+        "type": "string",
+        "title": "Who answers messages",
+        "description": "agent (default): messages wait in an inbox and your agent answers them with its own memory and tools, woken by a routine every few minutes. instant: Grok answers within seconds with a persona you set, without your agent's memory (needs XAI_API_KEY).",
+        "enum": [
+          "agent",
+          "instant"
+        ],
+        "default": "agent"
+      },
+      "ROUTINE_WEBHOOK_URL": {
+        "type": "string",
+        "title": "Wake-up routine webhook URL (optional)",
+        "description": "Create a routine on your Bot with the trigger \"When a webhook fires\" and the task \"Run the discord-inbox skill\", then paste its Webhook URL here so Discord messages wake your agent within seconds. You can also just ask your Bot to run the discord-setup skill."
+      },
+      "ROUTINE_WEBHOOK_KEY": {
+        "type": "string",
+        "title": "Wake-up routine webhook key (optional)",
+        "description": "The same routine's Webhook key.",
+        "writeOnly": true,
+        "format": "password"
       },
       "DISCORD_DEFAULT_CHANNEL_ID": {
         "type": "string",
@@ -65,8 +86,7 @@
       }
     },
     "required": [
-      "DISCORD_BOT_TOKEN",
-      "XAI_API_KEY"
+      "DISCORD_BOT_TOKEN"
     ]
   },
   "skills": "./skills/",
