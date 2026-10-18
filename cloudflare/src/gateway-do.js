@@ -6,7 +6,7 @@ import { annotateVoiceStatus, flyControlUrl, voiceHosting } from "../../server/c
 import { createClient } from "../../server/discord.mjs";
 import { loadLiveConfig } from "../../server/live/config.mjs";
 import { Inbox } from "../../server/live/inbox.mjs";
-import { fireVoiceRequest } from "../../server/live/voice/prompt.mjs";
+import { createUtteranceBatcher, fireVoiceRequest } from "../../server/live/voice/prompt.mjs";
 
 const ALARM_MS = 30_000;
 
@@ -26,6 +26,7 @@ export class DiscordGateway extends DurableObject {
     this.bot = null;
     this.sockets = new Map();
     this.health = new Map();
+    this.batchers = new Map();
     this.fatal = null;
     this.fatalToken = null;
     this.sql = ctx.blockConcurrencyWhile(async () => {
@@ -209,7 +210,7 @@ export class DiscordGateway extends DurableObject {
       else if (effect.type === "voice_packet") {
         const type = effect.packet.t === "VOICE_SERVER_UPDATE" ? "voice_server" : "voice_state";
         this.voiceSend(effect.guildId, { type, data: effect.packet.d });
-      } else if (effect.type === "voice_say") this.voiceSend(effect.guildId, { type: "say", content: effect.content });
+      } else if (effect.type === "voice_say") this.voiceSend(effect.guildId, { type: "say", content: effect.content, language: effect.language ?? null });
     }
   }
 
@@ -265,8 +266,8 @@ export class DiscordGateway extends DurableObject {
       type: "start",
       ...spec,
       elevenApiKey: this.env.ELEVENLABS_API_KEY || null,
-      agentId: this.env.ELEVENLABS_AGENT_ID || null,
       voiceId: this.env.ELEVENLABS_VOICE_ID || null,
+      ttsModel: this.env.ELEVENLABS_TTS_MODEL || null,
     }));
     this.keepVoice(guildId);
   }
@@ -279,16 +280,12 @@ export class DiscordGateway extends DurableObject {
       return;
     }
     if (msg.type === "gateway" && msg.payload) this.sendGateway(msg.payload);
-    else if (msg.type === "agent_request") {
-      const config = loadLiveConfig(this.env);
-      const stored = this.bot.snapshot().webhook;
-      const webhook = config.routineWebhook?.url ? config.routineWebhook : stored;
-      await fireVoiceRequest({
-        webhook,
-        request: msg.request,
-        call: msg.call ?? this.bot.calls.get(guildId) ?? null,
-        log: { warn: (message) => this.log("warn", String(message)) },
-      });
+    else if (msg.type === "utterance" && msg.text) {
+      const speaker = await this.bot.memberName(guildId, msg.userId).catch(() => null);
+      this.log("info", "voice utterance", { guildId, language: msg.language ?? null, chars: String(msg.text).length });
+      this.batcher(guildId).add({ speaker: speaker ?? "someone", speakerId: msg.userId ?? null, text: String(msg.text), language: msg.language ?? null, at: msg.at ?? new Date().toISOString() });
+    } else if (msg.type === "status") {
+      this.log(msg.state === "ready" ? "info" : "warn", "voice status", { guildId, state: msg.state, error: msg.error ?? null });
     } else if (msg.type === "transcript" && msg.text && this.env.DISCORD_BOT_TOKEN) {
       const call = this.bot.calls.get(guildId);
       if (!call) return;
@@ -303,6 +300,30 @@ export class DiscordGateway extends DurableObject {
       this.sockets.delete(guildId);
       this.stopHealth(guildId);
     }
+  }
+
+  // Finished utterances from one call, grouped briefly, then handed to the agent's routine.
+  batcher(guildId) {
+    let batcher = this.batchers.get(guildId);
+    if (!batcher) {
+      batcher = createUtteranceBatcher({
+        onFlush: (utterances) => {
+          const config = loadLiveConfig(this.env);
+          const stored = this.bot.snapshot().webhook;
+          const webhook = config.routineWebhook?.url ? config.routineWebhook : stored;
+          this.ctx.waitUntil(
+            fireVoiceRequest({
+              webhook,
+              utterances,
+              call: this.bot.calls.get(guildId) ?? null,
+              log: { warn: (message) => this.log("warn", String(message)) },
+            }),
+          );
+        },
+      });
+      this.batchers.set(guildId, batcher);
+    }
+    return batcher;
   }
 
   keepVoice(guildId) {

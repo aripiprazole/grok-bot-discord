@@ -1,4 +1,4 @@
-// Text chat, Slack-style: DMs, @mentions (answered in a new thread), and threads the bot is in.
+// Text chat: DMs, @mentions (answered inline as a reply), and threads the bot is in.
 // In agent mode messages go to the inbox for the agent; in instant mode Grok answers right away.
 
 import { ChannelType, ThreadAutoArchiveDuration } from "discord.js";
@@ -82,8 +82,9 @@ export function createChatHandler({ client, config, grok, agentInbox, followedTh
   }
 
   async function respondInstantly(message, mode) {
-    const thread = mode === "channel" ? await startThread(message, log) : null;
-    const target = thread ?? message.channel;
+    // Answer inline: in channels as a reply to the message, elsewhere as the next message.
+    const thread = null;
+    const target = message.channel;
     try {
       let messages;
       if (mode === "channel") {
@@ -115,13 +116,18 @@ export function createChatHandler({ client, config, grok, agentInbox, followedTh
   }
 
   return async function onMessage(message) {
-    if (message.author.bot || message.system) return;
-    if (!channelAllowed(message.channel, config)) return;
     const me = client.user.id;
+    // Other bots reach the agent inbox like people. Only our own messages and system messages are ignored.
+    if (message.author.id === me || message.system) return;
+    if (message.webhookId && message.applicationId === client.application?.id) return;
+    // Instant mode answers with no agent in the loop, so it stays off other bots to avoid reply loops.
+    if (message.author.bot && !agentInbox) return;
+    if (!channelAllowed(message.channel, config)) return;
     const { channel } = message;
     const mode = respondMode(
       {
         authorIsBot: message.author.bot,
+        authorIsSelf: message.author.id === me,
         isDM: channel.type === ChannelType.DM,
         inThread: channel.isThread(),
         threadOwnedByBot: channel.isThread() && channel.ownerId === me,

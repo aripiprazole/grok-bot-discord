@@ -116,7 +116,7 @@ function fakeDiscord() {
   return { BOT, client, channel, message, removedSeen };
 }
 
-test("agent mode: 👀 on arrival, the agent sees the conversation, replies land in a new thread", async () => {
+test("agent mode: 👀 on arrival, the agent sees the conversation, replies land in a new thread when asked", async () => {
   const d = fakeDiscord();
   const general = d.channel({ id: "100000000000000000" });
   d.message(general, { id: "100000000000000001", author: "bo", content: "anyone up?" });
@@ -140,7 +140,7 @@ test("agent mode: 👀 on arrival, the agent sees the conversation, replies land
   assert.ok(general.typing > 0, "shows typing while the agent works");
 
   assert.equal(await agentInbox.check(), "The Discord inbox is empty. Nothing to answer.", "claimed items aren't handed out twice");
-  const done = await agentInbox.reply({ itemId: id, content: "We ship Friday — I wrote it down." });
+  const done = await agentInbox.reply({ itemId: id, content: "We ship Friday — I wrote it down.", thread: true });
   assert.match(done, /^Replied in #general \(Team\): https:/);
   assert.deepEqual(thread.sent.map((m) => m.content), ["We ship Friday — I wrote it down."]);
   assert.ok(followedThreads.has(thread.id), "follow-ups in the thread reach the agent too");
@@ -148,7 +148,7 @@ test("agent mode: 👀 on arrival, the agent sees the conversation, replies land
   await assert.rejects(agentInbox.reply({ itemId: id, content: "again" }), /already answered or expired/);
 });
 
-test("thread false replies inline in the channel", async () => {
+test("replies inline in the channel by default", async () => {
   const d = fakeDiscord();
   const general = d.channel({ id: "100000000000000000" });
   const mention = d.message(general, { id: "100000000000000002", content: "@Nova stay here" });
@@ -160,8 +160,22 @@ test("thread false replies inline in the channel", async () => {
   const onMessage = createChatHandler({ client: d.client, config: loadLiveConfig({ DISCORD_BOT_TOKEN: "t" }), agentInbox });
   await onMessage(mention);
   const id = (await agentInbox.check()).match(/item (\w+)/)[1];
-  await agentInbox.reply({ itemId: id, content: "inline", thread: false });
+  await agentInbox.reply({ itemId: id, content: "inline" });
   assert.deepEqual(general.sent.map((m) => m.content), ["inline"]);
+});
+
+test("other bots reach the inbox, marked as bots; our own messages don't", async () => {
+  const d = fakeDiscord();
+  const general = d.channel({ id: "100000000000000000" });
+  const other = d.message(general, { id: "100000000000000003", author: "otherbot", content: "@Nova ping from another bot" });
+  other.author.bot = true;
+  const own = d.message(general, { id: "100000000000000004", content: "@Nova talking to myself", bot: true });
+  const agentInbox = createAgentInbox({ client: d.client, inbox: new Inbox(), log: { warn() {} } });
+  const onMessage = createChatHandler({ client: d.client, config: loadLiveConfig({ DISCORD_BOT_TOKEN: "t" }), agentInbox });
+  await onMessage(own);
+  assert.equal(await agentInbox.check(), "The Discord inbox is empty. Nothing to answer.");
+  await onMessage(other);
+  assert.match(await agentInbox.check(), /OTHERBOT \(@otherbot, id otherbot-id, a bot\): @Nova ping from another bot/);
 });
 
 test("agent mode: DMs reply in place and can be skipped", async () => {

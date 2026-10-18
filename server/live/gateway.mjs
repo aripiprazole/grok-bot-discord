@@ -94,7 +94,7 @@ export async function startGateway({ config, dataDir, log }) {
       const text = persona?.trim() ?? "";
       if (text.length > MAX_PERSONA) throw new Error(`Keep the persona under ${MAX_PERSONA} characters (got ${text.length}).`);
       writeJson(personaFile, { persona: text || null, updatedAt: new Date().toISOString() });
-      return text ? "Saved. Voice calls (and instant replies) will speak as this persona." : "Persona cleared.";
+      return text ? "Saved. Instant replies will use this persona." : "Persona cleared.";
     },
 
     setRoutineWebhook({ url, key }) {
@@ -121,8 +121,8 @@ export async function startGateway({ config, dataDir, log }) {
       return left.length ? "Left the voice channel." : "The bot isn't in a voice channel.";
     },
 
-    say({ serverId, content }) {
-      return voice.say({ serverId, content });
+    say({ serverId, content, language }) {
+      return voice.say({ serverId, content, language });
     },
 
     async stop(reason) {

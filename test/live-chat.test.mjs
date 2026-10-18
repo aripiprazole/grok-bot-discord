@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { configHash, effectiveReplyMode, isAllowed, loadLiveConfig, missingSettings } from "../server/live/config.mjs";
-import { buildInstructions, formatReply, respondMode, threadName, toInput } from "../server/live/conversation.mjs";
+import { buildInstructions, formatReply, resolveMentions, respondMode, threadName, toInput } from "../server/live/conversation.mjs";
 import { createGrok, parseResponse } from "../server/live/grok.mjs";
 
 const ENV = { DISCORD_BOT_TOKEN: "d", XAI_API_KEY: "x" };
@@ -40,7 +40,8 @@ test("responds like the Slack Team Bot", () => {
   assert.equal(respondMode({ ...base, inThread: true }, ctx([], ["c"])), "thread", "follows threads it was pulled into");
   assert.equal(respondMode({ ...base, inThread: true }, ctx()), null);
   assert.equal(respondMode({ ...base, inThread: true, parentId: "p" }, ctx(["p"])), "thread");
-  assert.equal(respondMode({ ...base, authorIsBot: true, isDM: true }, ctx()), null);
+  assert.equal(respondMode({ ...base, authorIsBot: true, isDM: true }, ctx()), "dm", "other bots are answered like people");
+  assert.equal(respondMode({ ...base, authorIsSelf: true, isDM: true }, ctx()), null, "never its own messages");
 });
 
 test("history becomes model input with names, rejoined replies, no error or source lines", () => {
@@ -68,7 +69,16 @@ test("reply formatting and thread names", () => {
   assert.equal(formatReply("  "), "I don't have an answer for that.");
   assert.equal(threadName("\n  @Grok fix the build <:ok:123>\nmore"), "@Grok fix the build");
   assert.equal(threadName("a".repeat(200)).length, 90);
-  assert.equal(threadName(""), "Chat with Grok");
+  assert.equal(threadName(""), "Chat");
+  const lookup = { user: (id) => ({ 1: "Gigaclanker", 2: "Gabi" })[id] ?? null, role: (id) => (id === "5" ? "Mods" : null), channel: (id) => (id === "9" ? "general" : null) };
+  assert.equal(threadName("<@1> hey <@!2>, check <#9> with <@&5>", lookup), "hey @Gabi, check #general with @Mods");
+  assert.equal(threadName("<@1>\nwhat about <@777>?", lookup), "what about @someone?", "skips the bare ping and never shows raw ids");
+  assert.equal(threadName("<@1>", lookup), "@Gigaclanker");
+  assert.doesNotMatch(threadName("<@1561130358152499222> o que vc acha disso", {}), /<@|\d{6,}/);
+  const long = threadName(`fala ${"palavra ".repeat(30)}`);
+  assert.ok(long.length <= 90 && long.endsWith("…") && !long.includes("palavra …"), long);
+  assert.equal(resolveMentions("<@3> in <#4> <@&6>"), "@someone in #channel @role");
+  assert.match(buildInstructions({ botName: "Grok", place: "in #dev" }), /language the person wrote in/);
   assert.match(buildInstructions({ botName: "Grok", place: "in #dev", extra: "Be nice." }), /chatting on Discord in #dev[\s\S]*Be nice\.$/);
 });
 

@@ -18,6 +18,7 @@ export function plainMessage(m) {
     authorName: displayName(m),
     username: m.author.username,
     content: m.cleanContent ?? "",
+    ...(m.author.bot ? { bot: true } : {}),
     attachments: [...(m.attachments?.values() ?? [])].map((a) => ({ name: a.name, url: a.url })),
     at: m.createdAt.toISOString(),
     url: m.url,
@@ -33,7 +34,7 @@ export function describePlace(channel, author) {
 const bySnowflake = (a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : BigInt(a.id) > BigInt(b.id) ? 1 : 0);
 
 export function formatLine(m, { botId, isNew }) {
-  const who = m.authorId === botId ? `${m.authorName} (you)` : `${m.authorName} (@${m.username}, id ${m.authorId})`;
+  const who = m.authorId === botId ? `${m.authorName} (you)` : `${m.authorName} (@${m.username}, id ${m.authorId}${m.bot ? ", a bot" : ""})`;
   const files = m.attachments.map((a) => ` [attachment: ${a.name} ${a.url}]`).join("");
   const text = `${m.content}${files}`.replace(/\n/g, "\n    ");
   return `${isNew ? "→" : " "} [${m.at.slice(0, 16).replace("T", " ")} UTC] ${who}: ${text}`;
@@ -118,8 +119,8 @@ export function createAgentInbox({ client, inbox, followedThreads = new Set(), o
       let replyTo = null;
       if (item.kind === "channel") {
         const mention = await channel.messages.fetch(item.messages[0].id).catch(() => null);
-        // `thread: false` replies inline. Anything else (including omitted) starts a thread when the channel allows it.
-        const started = thread !== false && mention ? await startThread(mention, log) : null;
+        // Inline by default. `thread: true` starts a thread when the channel allows it.
+        const started = thread === true && mention ? await startThread(mention, log) : null;
         target = started ?? channel;
         if (!started) replyTo = mention;
       }

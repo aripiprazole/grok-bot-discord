@@ -319,7 +319,7 @@ export const TOOLS = [
       }
       if (s.replyMode) {
         const voiceCalls = s.voiceEnabled ? (s.voiceHost === "fly" ? "on (Fly.io)" : "on") : `off (${s.voiceUnavailable || "needs ELEVENLABS_API_KEY"})`;
-        lines.push(`Persona for voice: ${s.persona ? "set" : "not set (set_discord_persona)"} · Voice calls: ${voiceCalls}`);
+        lines.push(`Persona: ${s.persona ? "set" : "not set (set_discord_persona)"} · Voice calls: ${voiceCalls}`);
       }
       if (s.invite) lines.push(`Invite link: ${s.invite}`);
       if (s.voice?.length) lines.push(...s.voice.map((v) => `In voice: 🔊 ${v.channel} (${v.server}), listening to ${v.listen}`));
@@ -331,7 +331,7 @@ export const TOOLS = [
     name: "join_voice_channel",
     title: "Join Discord voice channel",
     description:
-      "Have the bot join a voice channel and talk with people using ElevenLabs. It answers whoever speaks, or only `listen_to_user_id` if given. People in Discord can also use /join and /leave. During a call it can hand work to this agent; speak the answer back with say_in_voice_call.",
+      "Have the bot join a voice channel. It transcribes what people say in real time (ElevenLabs speech-to-text, any language) and hands each finished utterance to this agent through the routine webhook (source discord-voice, with speaker and detected language). It never answers on its own: you decide, and speak with say_in_voice_call. Listens to everyone, or only `listen_to_user_id` if given. People in Discord can also use /join and /leave.",
     inputSchema: {
       type: "object",
       properties: {
@@ -339,7 +339,7 @@ export const TOOLS = [
         listen_to_user_id: { type: "string", description: "Only respond to this user (ID or <@mention>). Omit to respond to everyone in the call." },
         persona: {
           type: "string",
-          description: "Who to be in this call: your name, personality, how you speak, and anything from your memory that matters here. Defaults to the saved persona.",
+          description: "Optional note about who you are in this call, saved with the call info. Defaults to the saved persona.",
         },
       },
       required: ["channel_id"],
@@ -370,19 +370,21 @@ export const TOOLS = [
     name: "say_in_voice_call",
     title: "Say in voice call",
     description:
-      "Speak text out loud in the bot's live Discord voice call. Use this to answer a request that arrived from a voice call (source discord-voice). Pass server_id when the bot is in more than one call.",
+      "Speak text out loud in the bot's live Discord voice call (ElevenLabs multilingual text-to-speech). Use this to answer a voice transcript (source discord-voice), in the language the speaker used. Pass server_id when the bot is in more than one call.",
     inputSchema: {
       type: "object",
       properties: {
         content: { type: "string", description: "What to say, in your own voice. Keep it short enough to speak." },
         server_id: { type: "string", description: "Server (guild) ID. Omit to speak in every current call." },
+        language: { type: "string", description: "ISO 639-1 code of the language you're speaking (e.g. pt, en). Defaults to the language last heard in the call." },
       },
       required: ["content"],
       additionalProperties: false,
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     async handler(args, ctx) {
-      return ctx.live.call("voice.say", { content: requireText(args.content, "content"), serverId: optionalId(args.server_id, "server_id") }, 30_000);
+      const language = typeof args.language === "string" && /^[a-z]{2,3}(-[A-Za-z]{2})?$/.test(args.language.trim()) ? args.language.trim() : null;
+      return ctx.live.call("voice.say", { content: requireText(args.content, "content"), serverId: optionalId(args.server_id, "server_id"), language }, 30_000);
     },
   },
   {
@@ -405,7 +407,7 @@ export const TOOLS = [
     name: "reply_on_discord",
     title: "Reply on Discord",
     description:
-      "Answer an inbox item from check_discord_inbox, in your own voice. It's posted in the right place (a new thread for channel @mentions, otherwise the same DM or thread) and the item is marked done. Pass thread false to reply inline in the channel instead of starting a thread.",
+      "Answer an inbox item from check_discord_inbox, in your own voice and in the language the person wrote in. It's posted where the conversation is: a reply to the message for channel @mentions, otherwise the same DM or thread, and the item is marked done. Pass thread true to start a new thread instead (rarely needed).",
     inputSchema: {
       type: "object",
       properties: {
@@ -413,7 +415,7 @@ export const TOOLS = [
         content: { type: "string", description: "Your reply (Discord markdown; long replies are split automatically). Optional when an embed, components, or a poll is set." },
         thread: {
           type: "boolean",
-          description: "For a channel @mention, start a thread (default). Pass false to reply inline in the channel.",
+          description: "For a channel @mention, start a new thread from it instead of replying inline. Default false.",
         },
         embeds: EMBED_SCHEMA,
         components: COMPONENTS_SCHEMA,
@@ -453,7 +455,7 @@ export const TOOLS = [
     name: "set_discord_persona",
     title: "Set Discord persona",
     description:
-      "Save who you are on Discord (name, personality, how you talk, key facts from your memory). Voice calls started from Discord with /join speak as this persona. Send an empty string to clear it.",
+      "Save who you are on Discord (name, personality, how you talk, key facts from your memory). Instant replies use this persona. Send an empty string to clear it.",
     inputSchema: {
       type: "object",
       properties: { persona: { type: "string", description: "A few sentences to a few paragraphs, written as instructions (\"You are…\")." } },

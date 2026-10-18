@@ -1,93 +1,106 @@
-// What the ElevenLabs agent is told, and the messages that connect it to the Grok Bot agent.
+// How a voice call talks to the Grok Bot agent. The voice side is only ears and a mouth:
+// finished utterances go to the routine webhook (source "discord-voice"), and the agent
+// answers by calling say_in_voice_call, which is spoken with ElevenLabs text-to-speech.
 
 import { checkWebhook } from "../waker.mjs";
 
-export const ASK_AGENT_TOOL_NAME = "ask_agent";
+// Utterances that end within this window of each other go to the agent together.
+export const BATCH_MS = 1_500;
+const MAX_BATCH = 12;
 
-export const ASK_AGENT_RESULT =
-  'Asked the Grok Bot agent. Keep the conversation going. When a message arrives that starts with "[From the Grok Bot agent", say that text out loud to the people on the call.';
-
-export const ASK_AGENT_TOOL_CONFIG = {
-  type: "client",
-  name: ASK_AGENT_TOOL_NAME,
-  description:
-    "Hand a task or question to the Grok Bot agent, who has the owner's memory, tools, and Discord. Use this when someone on the call asks you to remember something, look something up, check on a task, post in Discord, or do anything you cannot do from the call alone. Tell them you're checking, then call this. Their answer arrives later as a message that starts with \"[From the Grok Bot agent\" — say that text out loud.",
-  expects_response: true,
-  response_timeout_secs: 30,
-  parameters: {
-    type: "object",
-    properties: {
-      request: {
-        type: "string",
-        description: "What the caller wants, including names and context from the conversation.",
-      },
-    },
-    required: ["request"],
-  },
-};
-
-export const DEFAULT_VOICE_PROMPT = [
-  "You are talking with people in a Discord voice call.",
-  "Speak naturally and keep replies short (one to three sentences) unless someone asks for detail.",
-  "You only hear the call. You cannot see the screen or the text chat.",
-  `When someone asks you to remember something, look something up, post in Discord, or do anything that needs the owner's memory and tools, call ${ASK_AGENT_TOOL_NAME} and tell them you're checking.`,
-  `A later message that starts with "[From the Grok Bot agent" is the answer. Say it out loud, in your voice, briefly.`,
-].join(" ");
-
-export function voiceInstructions({ botName, listen, persona, extra }) {
-  return [
-    persona ? `You are ${botName}. ${persona}` : `You are ${botName}.`,
-    `You're talking in a Discord voice call${listen === "everyone" ? " that may include several people" : ""}.`,
-    "Speak naturally and keep replies short (one to three sentences) unless someone asks for detail.",
-    "You only hear the call; you can't see the screen or the text chat. Stay in character.",
-    `When someone asks you to remember something, look something up, post in Discord, or do anything that needs tools or memory, call the ${ASK_AGENT_TOOL_NAME} client tool and tell them you're checking.`,
-    `If a message arrives that starts with "[From the Grok Bot agent", say that text out loud to the call.`,
-    extra,
-  ]
-    .filter(Boolean)
-    .join("\n");
+const LANGUAGE_NAMES = { pt: "Portuguese", en: "English", es: "Spanish", fr: "French", de: "German", it: "Italian", ja: "Japanese", ko: "Korean", zh: "Chinese", ru: "Russian" };
+export function languageName(code) {
+  const base = String(code ?? "").toLowerCase().split(/[-_]/)[0];
+  const iso3 = { por: "pt", eng: "en", spa: "es", fra: "fr", deu: "de", ita: "it", jpn: "ja", kor: "ko", zho: "zh", rus: "ru" };
+  const two = iso3[base] ?? base;
+  return LANGUAGE_NAMES[two] ?? (two || null);
 }
 
-export function toolResult(callId, result, isError = false) {
-  return { type: "client_tool_result", tool_call_id: callId, result: String(result), is_error: isError };
+// The language most of the batch was spoken in (the latest wins a tie).
+export function dominantLanguage(utterances) {
+  const counts = new Map();
+  let best = null;
+  for (const u of utterances) {
+    if (!u.language) continue;
+    const n = (counts.get(u.language) ?? 0) + 1;
+    counts.set(u.language, n);
+    if (!best || n >= counts.get(best)) best = u.language;
+  }
+  return best;
 }
 
-// A user_message makes the ElevenLabs agent take a turn and speak.
-export function speakRequest(content) {
-  return {
-    type: "user_message",
-    text: `[From the Grok Bot agent — say this out loud to the people on the call, in your voice]\n${content}`,
-  };
+export function transcriptLines(utterances) {
+  return utterances.map((u) => `${u.speaker ?? "someone"}${u.speakerId ? ` (id ${u.speakerId})` : ""}${u.language ? ` [${u.language}]` : ""}: ${u.text}`);
 }
 
-export function voiceWakeBody({ request, call }) {
+export function voiceWakeBody({ utterances, call }) {
+  const list = (utterances ?? []).filter((u) => u?.text?.trim());
   const where = call?.place ?? "a Discord voice call";
+  const language = dominantLanguage(list);
+  const lang = languageName(language);
+  const lines = transcriptLines(list);
   return {
     source: "discord-voice",
-    kind: "voice_request",
-    request,
+    kind: "voice_transcript",
+    language,
+    utterances: list.map((u) => ({ speaker: u.speaker ?? null, speakerId: u.speakerId ?? null, text: u.text, language: u.language ?? null, at: u.at ?? null })),
+    request: list.map((u) => u.text).join(" "),
     call: call ?? null,
-    message: `Someone in ${where} needs you: ${request}\nUse your tools if you need them, then speak the answer in the call with say_in_voice_call. Do not only reply in text.`,
+    message: [
+      `Live transcript from ${where} (speech-to-text, may have small mistakes):`,
+      ...lines.map((l) => `  ${l}`),
+      "",
+      "You're in this call. Not every line needs an answer: reply when someone talks to you, asks something, or a reply clearly fits; otherwise do nothing.",
+      `To answer out loud, call say_in_voice_call with short, spoken-style text${lang ? ` in ${lang}, the language they spoke` : " in the language they spoke"}. Use your tools first if you need them.`,
+    ].join("\n"),
   };
 }
 
-export async function fireVoiceRequest({ webhook, request, call, fetchImpl = globalThis.fetch, log = console }) {
+export async function fireVoiceRequest({ webhook, utterances, call, fetchImpl = globalThis.fetch, log = console }) {
   const problem = checkWebhook(webhook ?? {});
   if (problem) return { ok: false, error: problem };
   try {
     const res = await fetchImpl(webhook.url, {
       method: "POST",
       headers: { Authorization: `Bearer ${webhook.key}`, "Content-Type": "application/json" },
-      body: JSON.stringify(voiceWakeBody({ request, call })),
+      body: JSON.stringify(voiceWakeBody({ utterances, call })),
       signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) {
-      log.warn?.(`Couldn't hand the voice request to the agent: HTTP ${res.status}`);
+      log.warn?.(`Couldn't hand the voice transcript to the agent: HTTP ${res.status}`);
       return { ok: false, error: `webhook returned HTTP ${res.status}` };
     }
     return { ok: true };
   } catch (err) {
-    log.warn?.(`Couldn't hand the voice request to the agent: ${err.message}`);
+    log.warn?.(`Couldn't hand the voice transcript to the agent: ${err.message}`);
     return { ok: false, error: err.message };
   }
+}
+
+// Groups utterances that land close together (two people talking over each other, a sentence
+// split by a breath) into one webhook call.
+export function createUtteranceBatcher({ onFlush, delayMs = BATCH_MS, timers = globalThis }) {
+  let batch = [];
+  let timer = null;
+  const flush = () => {
+    if (timer) timers.clearTimeout(timer);
+    timer = null;
+    if (!batch.length) return;
+    const out = batch;
+    batch = [];
+    onFlush(out);
+  };
+  return {
+    add(utterance) {
+      batch.push(utterance);
+      if (batch.length >= MAX_BATCH) return flush();
+      if (timer) timers.clearTimeout(timer);
+      timer = timers.setTimeout(flush, delayMs);
+      timer?.unref?.();
+    },
+    flush,
+    get size() {
+      return batch.length;
+    },
+  };
 }

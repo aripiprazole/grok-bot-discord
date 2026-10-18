@@ -8,16 +8,13 @@ import { buildInstructions, formatReply, respondMode, threadName, toInput } from
 import { createGrok } from "../live/grok.mjs";
 import { Inbox, LEASE_MS } from "../live/inbox.mjs";
 import { Waker, checkWebhook } from "../live/waker.mjs";
-import { voiceInstructions } from "../live/voice/prompt.mjs";
 import { INVITE_PERMISSIONS, VOICE_COMMANDS } from "./commands.mjs";
 
 export { withoutVoiceHost } from "./voice-host.mjs";
 
 const MAX_PERSONA = 4_000;
-const TEXT = 0;
 const DM = 1;
 const VOICE = 2;
-const ANNOUNCEMENT = 5;
 const THREADS = new Set([10, 11, 12]);
 const MESSAGE_TYPES = new Set([0, 19]);
 const NO_PINGS = { parse: [] };
@@ -54,6 +51,9 @@ export function createCloudBot({
   const tracked = new Set();
   const revisions = new Map();
   const REVISION_CAP = 500;
+  const roles = new Map(); // role id → name
+  const names = new Map(); // "guildId:userId" (or ":userId") → display name
+  const NAME_CAP = 2_000;
   let me = null;
   let applicationId = null;
   let persona = null;
@@ -90,6 +90,40 @@ export function createCloudBot({
     });
   }
 
+  function rememberName(guildId, user, member = null) {
+    if (!user?.id) return;
+    const name = member?.nick ?? user.global_name ?? user.username;
+    if (!name) return;
+    names.set(`${guildId ?? ""}:${user.id}`, name);
+    names.set(`:${user.id}`, name);
+    while (names.size > NAME_CAP) names.delete(names.keys().next().value);
+  }
+
+  function knownName(guildId, userId) {
+    if (userId && userId === me?.id) return me.global_name ?? me.username;
+    return names.get(`${guildId ?? ""}:${userId}`) ?? names.get(`:${userId}`) ?? null;
+  }
+
+  // Display name for someone in a server, asking Discord when we haven't seen them yet.
+  async function memberName(guildId, userId) {
+    const known = knownName(guildId, userId);
+    if (known) return known;
+    if (!rest || !guildId) return null;
+    const member = await rest.get(`/guilds/${guildId}/members/${userId}`).catch(() => null);
+    if (member?.user) rememberName(guildId, member.user, member);
+    return knownName(guildId, userId);
+  }
+
+  // Resolves <@id>, <@&role> and <#channel> in a message to names for thread titles.
+  function mentionLookup({ channelId, mentionNames = {} }) {
+    const guildId = channels.get(channelId)?.guildId ?? null;
+    return {
+      user: (id) => mentionNames[id] ?? knownName(guildId, id),
+      role: (id) => roles.get(id) ?? null,
+      channel: (id) => channels.get(id)?.name ?? null,
+    };
+  }
+
   function setVoiceState(guildId, userId, channelId) {
     if (!guildId || !userId) return;
     const states = voiceStates.get(guildId) ?? new Map();
@@ -121,6 +155,8 @@ export function createCloudBot({
       authorName: name,
       username: author.username ?? name,
       content: data.content ?? "",
+      ...(author.bot ? { bot: true } : {}),
+      ...(data.mentions?.length ? { mentionNames: Object.fromEntries(data.mentions.map((u) => [u.id, u.member?.nick ?? u.global_name ?? u.username ?? null])) } : {}),
       attachments: (data.attachments ?? []).map((a) => ({ name: a.filename ?? a.name ?? "file", url: a.url })),
       at: new Date(data.timestamp ?? now()).toISOString(),
       url: jumpLink(channel?.guildId, data.channel_id, data.id),
@@ -128,7 +164,7 @@ export function createCloudBot({
   }
 
   function formatLine(m, isNew) {
-    const who = m.authorId === me?.id ? `${m.authorName} (you)` : `${m.authorName} (@${m.username}, id ${m.authorId})`;
+    const who = m.authorId === me?.id ? `${m.authorName} (you)` : `${m.authorName} (@${m.username}, id ${m.authorId}${m.bot ? ", a bot" : ""})`;
     const files = m.attachments.map((a) => ` [attachment: ${a.name} ${a.url}]`).join("");
     const tag = m.deleted ? " (deleted)" : m.edited ? " (edited)" : "";
     return `${isNew ? "→" : " "} [${m.at.slice(0, 16).replace("T", " ")} UTC] ${who}: ${`${m.content}${files}`.replace(/\n/g, "\n    ")}${tag}`;
@@ -208,7 +244,11 @@ export function createCloudBot({
   async function onMessage(data) {
     if (!MESSAGE_TYPES.has(data.type ?? 0)) return;
     const author = data.author;
-    if (!author || author.bot || author.id === me?.id) return;
+    // Other bots get through like people (marked as bots in the inbox). Only we are ignored:
+    // our own messages, and webhook posts made by our own application.
+    if (!author || author.id === me?.id) return;
+    if (data.webhook_id && (data.webhook_id === applicationId || data.application_id === applicationId)) return;
+    if (data.guild_id) rememberName(data.guild_id, author, data.member);
     let channel = channels.get(data.channel_id);
     if (!channel && !data.guild_id) {
       channel = { id: data.channel_id, type: DM, name: author.username, parentId: null, guildId: null, guildName: null };
@@ -220,7 +260,8 @@ export function createCloudBot({
     if (!isAllowed(author.id, data.member?.roles ?? [], config)) return;
     const mode = respondMode(
       {
-        authorIsBot: false,
+        authorIsBot: Boolean(author.bot),
+        authorIsSelf: false,
         isDM: channel.type === DM || !data.guild_id,
         inThread: THREADS.has(channel.type),
         threadOwnedByBot: channel.ownerId === me?.id,
@@ -248,6 +289,8 @@ export function createCloudBot({
       waker.notify();
       return;
     }
+    // Instant mode answers on its own with no agent in the loop, so it stays off other bots to avoid reply loops.
+    if (author.bot) return;
     await instantReply(channel, data, message);
   }
 
@@ -277,24 +320,9 @@ export function createCloudBot({
       log.warn?.(`Instant reply failed: ${err.message}`);
       text = `⚠️ ${err.message}`;
     }
-    let target = channel.id;
-    let replyTo = null;
-    if (THREADS.has(channel.type) || channel.type === DM) {
-      target = channel.id;
-    } else if (channel.type === TEXT || channel.type === ANNOUNCEMENT) {
-      try {
-        const thread = await rest.post(`/channels/${channel.id}/messages/${data.id}/threads`, {
-          name: threadName(message.content),
-          auto_archive_duration: 1440,
-        });
-        followed.add(thread.id);
-        rememberChannel({ ...thread, parent_id: channel.id, guild_id: channel.guildId }, { id: channel.guildId, name: channel.guildName });
-        target = thread.id;
-      } catch {
-        replyTo = data.id;
-      }
-    }
-    await postChunks(target, text, replyTo);
+    // Answer where the message is: in DMs and threads as the next message, in channels as a reply.
+    const replyTo = THREADS.has(channel.type) || channel.type === DM ? null : data.id;
+    await postChunks(channel.id, text, replyTo);
   }
 
   async function maybeLeave(guildId) {
@@ -334,7 +362,6 @@ export function createCloudBot({
       place: `🔊 ${channel.name} (${channel.guildName ?? "server"})`,
       server: channel.guildName ?? "server",
       channel: channel.name,
-      instructions: voiceInstructions({ botName: me.username, listen, persona: who, extra: config.systemPrompt }),
       maxMinutes: config.voice?.maxMinutes ?? 60,
     };
     calls.set(guildId, spec);
@@ -366,7 +393,7 @@ export function createCloudBot({
     try {
       beginCall({ guildId: data.guild_id, channelId, listen, hostId: user.id });
       const who = listen === "me" ? "you" : "everyone";
-      await editInteraction(data, `🎙️ Joined <#${channelId}> and listening to ${who}. Just talk, and I'll answer when you pause. Run \`/leave\` to end the call.`);
+      await editInteraction(data, `🎙️ Joined <#${channelId}> and listening to ${who}. Just talk. Run \`/leave\` to end the call.`);
     } catch (err) {
       await editInteraction(data, `⚠️ ${err.message}`);
     }
@@ -505,10 +532,20 @@ export function createCloudBot({
       case "GUILD_CREATE":
         guilds.set(data.id, { id: data.id, name: data.name });
         for (const channel of data.channels ?? []) rememberChannel(channel, data);
+        for (const channel of data.threads ?? []) rememberChannel(channel, data);
+        for (const role of data.roles ?? []) roles.set(role.id, role.name);
+        for (const member of data.members ?? []) rememberName(data.id, member.user, member);
         for (const state of data.voice_states ?? []) setVoiceState(data.id, state.user_id, state.channel_id);
         break;
       case "GUILD_DELETE":
         guilds.delete(data.id);
+        break;
+      case "GUILD_ROLE_CREATE":
+      case "GUILD_ROLE_UPDATE":
+        if (data.role?.id) roles.set(data.role.id, data.role.name);
+        break;
+      case "GUILD_ROLE_DELETE":
+        roles.delete(data.role_id);
         break;
       case "CHANNEL_CREATE":
       case "CHANNEL_UPDATE":
@@ -535,6 +572,7 @@ export function createCloudBot({
         break;
       case "VOICE_STATE_UPDATE":
         setVoiceState(data.guild_id, data.user_id, data.channel_id);
+        if (data.member?.user) rememberName(data.guild_id, data.member.user, data.member);
         if (calls.has(data.guild_id)) effect({ type: "voice_packet", guildId: data.guild_id, packet: { t: "VOICE_STATE_UPDATE", d: data } });
         await maybeLeave(data.guild_id);
         break;
@@ -671,12 +709,12 @@ export function createCloudBot({
     return left.length ? "Left the voice channel." : "The bot isn't in a voice channel.";
   }
 
-  function say({ serverId, content }) {
+  function say({ serverId, content, language = null }) {
     const text = content?.trim();
     if (!text) throw new Error("content must be a non-empty string.");
     const targets = serverId ? [calls.get(serverId)].filter(Boolean) : [...calls.values()];
     if (!targets.length) throw new Error(serverId ? "The bot isn't in a voice channel on that server." : "The bot isn't in a voice channel.");
-    for (const call of targets) effect({ type: "voice_say", guildId: call.guildId, content: text });
+    for (const call of targets) effect({ type: "voice_say", guildId: call.guildId, content: text, language: language || null });
     return `Speaking in ${targets.map((c) => `🔊 ${c.channel}`).join(", ")}.`;
   }
 
@@ -715,10 +753,11 @@ export function createCloudBot({
     let replyTo = null;
     if (item.kind === "channel") {
       const mention = item.messages[0];
-      if (thread !== false) {
+      // Inline by default: a reply to the mention. A thread only when asked for (thread: true).
+      if (thread === true) {
         try {
           const started = await rest.post(`/channels/${item.channelId}/messages/${mention.id}/threads`, {
-            name: threadName(mention.content),
+            name: threadName(mention.content, mentionLookup({ channelId: item.channelId, mentionNames: mention.mentionNames })),
             auto_archive_duration: 1440,
           });
           followed.add(started.id);
@@ -751,7 +790,7 @@ export function createCloudBot({
     const value = text?.trim() ?? "";
     if (value.length > MAX_PERSONA) throw new Error(`Keep the persona under ${MAX_PERSONA} characters (got ${value.length}).`);
     persona = value || null;
-    return persona ? "Saved. Voice calls (and instant replies) will speak as this persona." : "Persona cleared.";
+    return persona ? "Saved. Instant replies will use this persona." : "Persona cleared.";
   }
 
   function setRoutine({ url, key }) {
@@ -772,6 +811,7 @@ export function createCloudBot({
     waker,
     calls,
     followed,
+    memberName,
     snapshot() {
       return {
         persona,

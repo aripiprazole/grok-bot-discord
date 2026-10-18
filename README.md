@@ -2,9 +2,9 @@
 
 This plugin puts your agents on Discord as themselves. It works like Grok Bot's Slack app, but each agent gets its own Discord bot and answers with its own memory, personality and tools.
 
-- **@mention it** in a channel and it answers in a thread. It keeps following that thread, so replies there don't need another mention.
+- **@mention it** in a channel and it replies right there, in the language you wrote in. Threads it's in keep working without another mention.
 - **DM it** and it answers.
-- **`/join` in a voice channel** and you can talk with it through ElevenLabs, speaking as its persona.
+- **`/join` in a voice channel** and it listens: ElevenLabs transcribes the call in real time (any language), your agent decides what to say, and ElevenLabs speaks it.
 - **Tools for your agent:** read channels, post updates, reply, react, start threads, and join or leave calls.
 
 > This is an unofficial plugin and is not affiliated with Discord Inc.
@@ -22,7 +22,8 @@ Grok Bot routine wakes your agent ──▶ check_discord_inbox ──▶ answer
    - Without a webhook, a routine on a 5-minute schedule works too.
 3. **Answer.** The agent reads each conversation, answers in its own voice with `reply_on_discord`, and saves anything worth remembering to its own memory.
    - "Bot is typing…" shows while it works.
-   - Channel @mentions get their own thread.
+   - Channel @mentions are answered inline, as a reply. Pass `thread: true` to `reply_on_discord` to start a thread instead; its title uses people's names, never raw `<@id>` mentions.
+   - Messages from other bots reach the inbox too, marked as bots. Only the bot's own messages are ignored. (Instant mode still ignores bots so two bots can't loop.)
 
 Prefer instant, memory-less replies? Set `REPLY_MODE=instant` and an xAI key, and Grok answers directly within seconds.
 
@@ -40,8 +41,9 @@ Prefer instant, memory-less replies? Set `REPLY_MODE=instant` and an xAI key, an
 | Setting | Required | What it is |
 |---|---|---|
 | `DISCORD_BOT_TOKEN` | yes | The bot your agent speaks as. Use a different bot for each agent. |
-| `ELEVENLABS_API_KEY` | for voice | Lets the bot talk in voice calls via ElevenLabs Agents |
-| `ELEVENLABS_AGENT_ID`, `ELEVENLABS_VOICE_ID` | no | Use an existing ElevenLabs agent and voice. Empty creates or reuses an agent named `grok-bot-discord` |
+| `ELEVENLABS_API_KEY` | for voice | Voice calls: realtime speech-to-text (Scribe v2 Realtime) and text-to-speech |
+| `ELEVENLABS_VOICE_ID` | no | The voice the bot speaks with. Defaults to the premade voice George |
+| `ELEVENLABS_TTS_MODEL` | no | Text-to-speech model. Defaults to `eleven_flash_v2_5` (multilingual, low latency); `eleven_multilingual_v2` sounds richer but is slower |
 | `XAI_API_KEY` | instant replies | Powers `REPLY_MODE=instant` only. Voice does not use it |
 | `REPLY_MODE` | no | `agent` (default): your agent answers with its memory. `instant`: Grok answers right away. |
 | `ROUTINE_WEBHOOK_URL`, `ROUTINE_WEBHOOK_KEY` | no | Your wake-up routine's webhook. The agent can also save these itself with `connect_discord_routine`. |
@@ -96,12 +98,20 @@ grok-bot-discord help   # every tool and its arguments
   - It needs Node.js 22.12+. The tools alone need Node.js 18.17+.
 - **Inbox:** items the agent claims are held for 10 minutes and come back if they're never answered. Items older than a day are dropped.
 - **Re-wake:** if messages wait over 2 minutes unclaimed (say a routine run failed), the process fires the webhook again, at most every 10 minutes.
-- **Voice:** Discord audio goes to an ElevenLabs Conversational AI agent with the bot's persona, and that agent's speech is played back into the call.
-  - You can interrupt it by talking over it.
-  - `/join listen:Only me` makes it respond to you only.
-  - It leaves when the call empties, or after 60 minutes.
-  - When someone on the call asks for something that needs memory or tools, the voice agent calls `ask_agent`. That wakes your routine. Answer with `say_in_voice_call` so the result is spoken in the call.
-  - ElevenLabs bills the call on your ElevenLabs account. The first call can create an agent named `grok-bot-discord` and attach the `ask_agent` client tool. Set `ELEVENLABS_AGENT_ID` to use an agent you already configured. That agent still gets `ask_agent` attached, and per-call persona or voice overrides only apply if the agent allows them.
+- **Voice:** the voice side is only ears and a mouth. It never makes up answers.
+
+  ```
+  Discord call ──▶ per-speaker audio ──▶ ElevenLabs Scribe realtime (STT, language detection)
+        ▲                                         │ one utterance per pause (~0.8 s of silence)
+        │                                         ▼
+  ElevenLabs TTS ◀── say_in_voice_call ◀── your agent ◀── routine webhook (source: discord-voice)
+  ```
+
+  - Each person gets their own speech-to-text stream, so every utterance carries who said it and the language it was spoken in. Blips under 250 ms, empty results and non-speech tags like "(music)" are dropped. Long monologues are cut every 30 s.
+  - Utterances that end within 1.5 s of each other are sent together in one webhook call: `{ source: "discord-voice", kind: "voice_transcript", language, utterances: [{ speaker, speakerId, text, language }], call, message }`.
+  - The agent decides whether to answer and speaks with `say_in_voice_call` (optional `language`, defaulting to the last language heard). Speech uses a multilingual ElevenLabs model, so Portuguese, English, Spanish and the rest sound right.
+  - `/join listen:Only me` transcribes only you. It leaves when the call empties, or after 60 minutes.
+  - ElevenLabs bills speech-to-text and text-to-speech on your ElevenLabs account.
 - **Safety:**
   - Discord text is untrusted input. The agent is told never to follow instructions inside it, and to ask its owner before risky actions.
   - `ALLOWED_IDS` limits who can reach the agent.
@@ -111,7 +121,7 @@ grok-bot-discord help   # every tool and its arguments
 
 The hosted bot does not need a personal computer. A Worker serves MCP. One Durable Object keeps the Discord gateway and the inbox. Voice cannot run on the Worker: Discord voice is UDP, and Workers cannot send UDP. On the Workers Free plan the voice host is a Fly.io Machine. A Cloudflare Container remains available on a paid Workers plan.
 
-Tradeoff: the gateway, inbox, MCP, and webhooks stay on a Worker, which is the cheap always-on part. An outbound WebSocket to Discord keeps that Durable Object alive, with a 30 second alarm and a cron trigger as backup. Each voice call starts a Container (`basic` instance, internet on so UDP to Discord works) and talks to ElevenLabs over a WebSocket. Containers need a paid Workers plan, Docker on the machine that runs `wrangler deploy`, and a few seconds of cold start when someone joins. The `durable_object` scheduling policy picks the image and instance size in code; concurrent calls count against the account's container quota, one container per server.
+Tradeoff: the gateway, inbox, MCP, and webhooks stay on a Worker, which is the cheap always-on part. An outbound WebSocket to Discord keeps that Durable Object alive, with a 30 second alarm and a cron trigger as backup. Each voice call starts a Container (`basic` instance, internet on so UDP to Discord works) and streams to ElevenLabs speech-to-text over WebSockets. Containers need a paid Workers plan, Docker on the machine that runs `wrangler deploy`, and a few seconds of cold start when someone joins. The `durable_object` scheduling policy picks the image and instance size in code; concurrent calls count against the account's container quota, one container per server.
 
 ### Deploy
 
@@ -123,7 +133,6 @@ npx wrangler secret put DISCORD_BOT_TOKEN --config ../wrangler.jsonc
 npx wrangler secret put MCP_AUTH_TOKEN --config ../wrangler.jsonc
 npx wrangler secret put ELEVENLABS_API_KEY --config ../wrangler.jsonc
 # optional
-npx wrangler secret put ELEVENLABS_AGENT_ID --config ../wrangler.jsonc
 npx wrangler secret put ELEVENLABS_VOICE_ID --config ../wrangler.jsonc
 npx wrangler secret put ROUTINE_WEBHOOK_URL --config ../wrangler.jsonc
 npx wrangler secret put ROUTINE_WEBHOOK_KEY --config ../wrangler.jsonc
@@ -154,7 +163,7 @@ From `cloudflare/`, `npm run deploy:novoice` and `npm run check:novoice` use tha
 
 The free-plan Worker stays as it is. Voice runs on one always-on Fly Machine in São Paulo (`gru`), `shared-cpu-1x` with 512 MB. `auto_stop_machines` is `"off"` and `min_machines_running` is 1. Discord voice UDP leaves the Machine directly; nothing publishes a public UDP port. The image is the same `voice.Dockerfile` the Container path uses.
 
-The Durable Object opens `wss://<app>.fly.dev/control` with `Authorization: Bearer <VOICE_HOST_SECRET>` when `VOICE_HOST` (the Container binding) is absent and both `VOICE_HOST_URL` and `VOICE_HOST_SECRET` are set. It forwards `VOICE_STATE_UPDATE` and `VOICE_SERVER_UPDATE`, and sends the voice host's gateway payloads back out the Discord gateway. `join_voice_channel`, `leave_voice_channel`, `say_in_voice_call`, `/join`, and `/leave` use that socket. `ask_agent` still posts the routine webhook from the Durable Object, so `ROUTINE_WEBHOOK_URL` and `ROUTINE_WEBHOOK_KEY` stay on the Worker.
+The Durable Object opens `wss://<app>.fly.dev/control` with `Authorization: Bearer <VOICE_HOST_SECRET>` when `VOICE_HOST` (the Container binding) is absent and both `VOICE_HOST_URL` and `VOICE_HOST_SECRET` are set. It forwards `VOICE_STATE_UPDATE` and `VOICE_SERVER_UPDATE`, and sends the voice host's gateway payloads back out the Discord gateway. `join_voice_channel`, `leave_voice_channel`, `say_in_voice_call`, `/join`, and `/leave` use that socket. Voice transcripts still post the routine webhook from the Durable Object, so `ROUTINE_WEBHOOK_URL` and `ROUTINE_WEBHOOK_KEY` stay on the Worker.
 
 If the Container binding is present (`wrangler.jsonc`), it wins and Fly is not used.
 
@@ -168,7 +177,7 @@ fly secrets set \
   ELEVENLABS_API_KEY="..." \
   -a grok-bot-discord-voice
 # optional
-fly secrets set ELEVENLABS_AGENT_ID="..." ELEVENLABS_VOICE_ID="..." -a grok-bot-discord-voice
+fly secrets set ELEVENLABS_VOICE_ID="..." ELEVENLABS_TTS_MODEL="..." -a grok-bot-discord-voice
 fly deploy --ha=false
 ```
 
