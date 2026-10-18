@@ -1,6 +1,8 @@
 // Same Worker as wrangler.jsonc, minus the voice container, for accounts on the
-// Workers Free plan (Containers need Workers Paid). Voice tools report
-// "Voice hosting isn't configured." To add voice later, deploy with wrangler.jsonc.
+// Workers Free plan (Containers need Workers Paid). Voice runs on Fly.io when
+// the secrets VOICE_HOST_URL and VOICE_HOST_SECRET are set. Without them, voice
+// tools report "Voice hosting isn't configured." wrangler.jsonc remains the
+// Cloudflare Containers path.
 //
 // GATEWAY_ENABLED="false" keeps the Durable Object off the Discord gateway, so it
 // can't fight another process (e.g. the box daemon) running the same bot token.

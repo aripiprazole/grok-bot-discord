@@ -318,7 +318,7 @@ export const TOOLS = [
         lines.push("Replies: instant (Grok answers right away).");
       }
       if (s.replyMode) {
-        const voiceCalls = s.voiceEnabled ? "on" : `off (${s.voiceUnavailable || "needs ELEVENLABS_API_KEY"})`;
+        const voiceCalls = s.voiceEnabled ? (s.voiceHost === "fly" ? "on (Fly.io)" : "on") : `off (${s.voiceUnavailable || "needs ELEVENLABS_API_KEY"})`;
         lines.push(`Persona for voice: ${s.persona ? "set" : "not set (set_discord_persona)"} · Voice calls: ${voiceCalls}`);
       }
       if (s.invite) lines.push(`Invite link: ${s.invite}`);
