@@ -1,6 +1,6 @@
 // One Durable Object holds the Discord gateway, the inbox, and the voice-call control sockets.
 import { DurableObject } from "cloudflare:workers";
-import { createCloudBot } from "../../server/cloud/bot.mjs";
+import { createCloudBot, withoutVoiceHost } from "../../server/cloud/bot.mjs";
 import { FATAL_CLOSE_CODES, GATEWAY_URL, GatewaySession } from "../../server/cloud/gateway-session.mjs";
 import { createClient } from "../../server/discord.mjs";
 import { loadLiveConfig } from "../../server/live/config.mjs";
@@ -188,8 +188,8 @@ export class DiscordGateway extends DurableObject {
     const gateway = await this.ensureConnected();
     let result = await this.bot.handle(method, params ?? {});
     if (method === "status" && result && typeof result === "object") {
-      // Without the VoiceHost container binding (wrangler.novoice.jsonc) calls can't start.
-      if (!this.env.VOICE_HOST) result = { ...result, voiceEnabled: false };
+      // Without the VoiceHost binding the key can still be set. Keep that distinct from a missing key.
+      if (!this.env.VOICE_HOST) result = withoutVoiceHost(result);
       result = gateway.disabled
         ? { ...result, status: "gateway disabled", gateway: "disabled", error: result.error ?? "GATEWAY_ENABLED=false, so REST tools work but there are no live events or inbox" }
         : { ...result, gateway: gateway.ok ? "enabled" : "error", gatewayError: gateway.ok ? null : gateway.error };
