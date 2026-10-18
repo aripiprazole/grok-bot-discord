@@ -9,6 +9,12 @@ import { fireVoiceRequest } from "../../server/live/voice/prompt.mjs";
 
 const ALARM_MS = 30_000;
 
+// GATEWAY_ENABLED=false keeps the Durable Object off the Discord gateway (REST tools still work).
+// Use it while another process (e.g. the box daemon) is running with the same bot token.
+export function gatewayEnabled(env) {
+  return !/^(false|0|off|no)$/i.test(String(env?.GATEWAY_ENABLED ?? "true").trim());
+}
+
 export class DiscordGateway extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
@@ -120,11 +126,24 @@ export class DiscordGateway extends DurableObject {
       // already closed
     }
     this.ws = null;
-    this.ctx.waitUntil(this.ctx.storage.setAlarm(Date.now() + 5_000));
+    if (gatewayEnabled(this.env)) this.ctx.waitUntil(this.ctx.storage.setAlarm(Date.now() + 5_000));
   }
 
   async ensureConnected() {
     await this.boot();
+    if (!gatewayEnabled(this.env)) {
+      if (this.ws) {
+        try {
+          this.ws.close(1000, "gateway disabled");
+        } catch {
+          // already closed
+        }
+        this.ws = null;
+        this.session?.stop();
+      }
+      await this.ctx.storage.deleteAlarm();
+      return { ok: false, disabled: true, error: "Gateway disabled (GATEWAY_ENABLED=false)." };
+    }
     if (!this.env.DISCORD_BOT_TOKEN) return { ok: false, error: "DISCORD_BOT_TOKEN is not set." };
     if (this.fatal) return { ok: false, error: this.fatal };
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
@@ -153,7 +172,7 @@ export class DiscordGateway extends DurableObject {
         this.log("error", "discord gateway fatal close", { code: ev.code });
         return;
       }
-      this.ctx.waitUntil(this.ctx.storage.setAlarm(Date.now() + 5_000));
+      if (gatewayEnabled(this.env)) this.ctx.waitUntil(this.ctx.storage.setAlarm(Date.now() + 5_000));
     });
     ws.addEventListener("error", () => {});
     await this.ctx.storage.setAlarm(Date.now() + ALARM_MS);
@@ -166,8 +185,15 @@ export class DiscordGateway extends DurableObject {
   }
 
   async handle(method, params) {
-    await this.ensureConnected();
-    const result = await this.bot.handle(method, params ?? {});
+    const gateway = await this.ensureConnected();
+    let result = await this.bot.handle(method, params ?? {});
+    if (method === "status" && result && typeof result === "object") {
+      // Without the VoiceHost container binding (wrangler.novoice.jsonc) calls can't start.
+      if (!this.env.VOICE_HOST) result = { ...result, voiceEnabled: false };
+      result = gateway.disabled
+        ? { ...result, status: "gateway disabled", gateway: "disabled", error: result.error ?? "GATEWAY_ENABLED=false, so REST tools work but there are no live events or inbox" }
+        : { ...result, gateway: gateway.ok ? "enabled" : "error", gatewayError: gateway.ok ? null : gateway.error };
+    }
     this.persist();
     return result;
   }

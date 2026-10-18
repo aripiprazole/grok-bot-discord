@@ -13,7 +13,8 @@
     "crons": ["* * * * *"]
   },
   "vars": {
-    "REPLY_MODE": "agent"
+    "REPLY_MODE": "agent",
+    "GATEWAY_ENABLED": "true"
   },
   "containers": [
     {
