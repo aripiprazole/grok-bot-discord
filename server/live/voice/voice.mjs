@@ -1,11 +1,12 @@
-// Voice calls: /join brings the bot into a voice channel and talks through ElevenLabs Agents.
+// Voice calls: /join brings the bot into a voice channel. ElevenLabs transcribes what people say,
+// the agent decides what to answer, and say_in_voice_call speaks it with ElevenLabs text-to-speech.
 
 import { ChannelType, InteractionContextType, MessageFlags, SlashCommandBuilder } from "discord.js";
 import { VoiceConnectionStatus, entersState, joinVoiceChannel } from "@discordjs/voice";
 import { channelAllowed, isAllowed } from "../config.mjs";
 import { chunkMessage } from "../../format.mjs";
-import { bindElevenToConnection } from "./eleven-call.mjs";
-import { fireVoiceRequest, voiceInstructions } from "./prompt.mjs";
+import { bindVoiceToConnection } from "./call.mjs";
+import { createUtteranceBatcher, fireVoiceRequest } from "./prompt.mjs";
 
 const CONNECT_TIMEOUT_MS = 20_000;
 const EPHEMERAL = { flags: MessageFlags.Ephemeral };
@@ -42,29 +43,28 @@ class VoiceSession {
       selfMute: false,
     });
     await entersState(this.connection, VoiceConnectionStatus.Ready, CONNECT_TIMEOUT_MS);
-    this.binder = bindElevenToConnection(this.connection, {
+    const callInfo = {
+      guildId: channel.guild.id,
+      channelId: channel.id,
+      place: `🔊 ${channel.name} (${channel.guild.name})`,
+      server: channel.guild.name,
+      channel: channel.name,
+      listen: this.listen,
+      hostId: this.hostId,
+    };
+    const batcher = createUtteranceBatcher({ onFlush: (utterances) => this.onAgentRequest?.({ utterances, call: callInfo }) });
+    this.binder = bindVoiceToConnection(this.connection, {
       apiKey: this.config.elevenApiKey,
-      agentId: this.config.voice.agentId,
       voiceId: this.config.voice.voiceId,
-      instructions: voiceInstructions({
-        botName: this.botName,
-        listen: this.listen,
-        persona: this.persona,
-        extra: this.config.systemPrompt,
-      }),
+      ttsModel: this.config.voice.ttsModel ?? undefined,
       canHear: (userId) => this.canHear(userId),
-      onTranscript: (text) => this.config.voice.transcripts && this.post(`🔊 **${this.botName}:** ${text}`),
-      onError: (err) => this.log.warn(`ElevenLabs voice: ${err.message}`),
-      onAgentRequest: (payload) => this.onAgentRequest?.(payload),
-      onClose: (code, reason) => this.stop(code === 1000 ? null : `ElevenLabs disconnected (${code}${reason ? `: ${reason}` : ""}).`),
-      onLimit: (reason) => this.stop(reason),
-      callInfo: {
-        guildId: channel.guild.id,
-        channelId: channel.id,
-        place: `🔊 ${channel.name} (${channel.guild.name})`,
-        listen: this.listen,
-        hostId: this.hostId,
+      onUtterance: ({ userId, text, language }) => {
+        const member = channel.guild.members.cache.get(userId);
+        batcher.add({ speaker: member?.displayName ?? "someone", speakerId: userId, text, language, at: new Date().toISOString() });
       },
+      onSpoken: (text) => this.config.voice.transcripts && this.post(`🔊 **${this.botName}:** ${text}`),
+      onError: (err) => this.log.warn(`ElevenLabs voice: ${err.message}`),
+      onLimit: (reason) => this.stop(reason),
       maxMinutes: this.config.voice.maxMinutes,
       log: this.log,
     });
@@ -86,9 +86,9 @@ class VoiceSession {
     return this.listen === "everyone" || userId === this.hostId;
   }
 
-  say(content) {
+  say(content, opts) {
     if (!this.binder) throw new Error("The voice call isn't connected yet.");
-    this.binder.say(content);
+    this.binder.say(content, opts);
   }
 
   post(text) {
@@ -124,8 +124,8 @@ export function createVoiceManager({ client, config, getPersona = () => null, ge
       botName: client.user.username,
       log,
       onEnd: () => sessions.get(channel.guild.id) === session && sessions.delete(channel.guild.id),
-      onAgentRequest: ({ request, call }) => {
-        fireVoiceRequest({ webhook: getWebhook?.() ?? config.routineWebhook, request, call, log }).catch(() => {});
+      onAgentRequest: ({ utterances, call }) => {
+        fireVoiceRequest({ webhook: getWebhook?.() ?? config.routineWebhook, utterances, call, log }).catch(() => {});
       },
     });
     sessions.set(channel.guild.id, session);
@@ -145,12 +145,12 @@ export function createVoiceManager({ client, config, getPersona = () => null, ge
     return true;
   }
 
-  function say({ serverId, content }) {
+  function say({ serverId, content, language = null }) {
     const text = content?.trim();
     if (!text) throw new Error("content must be a non-empty string.");
     const targets = serverId ? [sessions.get(serverId)].filter(Boolean) : [...sessions.values()];
     if (!targets.length) throw new Error(serverId ? "The bot isn't in a voice channel on that server." : "The bot isn't in a voice channel.");
-    for (const session of targets) session.say(text);
+    for (const session of targets) session.say(text, { language });
     return `Speaking in ${targets.map((s) => `🔊 ${s.channel.name}`).join(", ")}.`;
   }
 
@@ -166,7 +166,7 @@ export function createVoiceManager({ client, config, getPersona = () => null, ge
       return interaction.editReply(`⚠️ ${err.message}`);
     }
     const who = listen === "me" ? "you" : "everyone";
-    return interaction.editReply(`🎙️ Joined <#${channel.id}> and listening to ${who}. Just talk, and I'll answer when you pause. Run \`/leave\` to end the call.`);
+    return interaction.editReply(`🎙️ Joined <#${channel.id}> and listening to ${who}. Just talk. Run \`/leave\` to end the call.`);
   }
 
   return {

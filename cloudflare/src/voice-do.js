@@ -1,5 +1,5 @@
 // One container per guild. Discord voice is UDP, which Workers cannot send, so the
-// container runs @discordjs/voice and the ElevenLabs Agents socket.
+// container runs @discordjs/voice and ElevenLabs speech-to-text and text-to-speech.
 import { DurableObject } from "cloudflare:workers";
 
 const INACTIVITY_MS = 5 * 60 * 1000;

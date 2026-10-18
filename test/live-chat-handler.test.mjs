@@ -62,36 +62,39 @@ function setup(env = {}, answer = { text: "Hello!", sources: [] }) {
   return { calls, onMessage: createChatHandler({ client: { user: BOT }, config, grok, log: quietLog }) };
 }
 
-test("a mention in a channel starts a thread and answers there without pinging", async () => {
+test("a mention in a channel is answered inline as a reply, without a thread or pings", async () => {
+  const { calls, onMessage } = setup();
+  const ch = channel();
+  const msg = message({ content: "@Grok summarize the outage", ch });
+  msg.startThread = async () => {
+    throw new Error("should not start a thread");
+  };
+  await onMessage(msg);
+  assert.deepEqual(calls[0].input, [{ role: "user", content: "ana!: @Grok summarize the outage" }]);
+  assert.match(calls[0].instructions, /in #general on the "Team" server/);
+  assert.equal(msg.replies.length, 1);
+  assert.equal(msg.replies[0].content, "Hello!");
+  assert.deepEqual(msg.replies[0].allowedMentions, { parse: [], repliedUser: false });
+});
+
+test("threads the bot owns are followed without a mention", async () => {
   const { calls, onMessage } = setup();
   const ch = channel();
   const thread = channel({ id: "t1", thread: true, ownerId: BOT.id, parent: ch });
-  const msg = message({ content: "@Grok summarize the outage", ch });
-  let threadName;
-  msg.startThread = async ({ name }) => {
-    threadName = name;
-    return thread;
-  };
-  await onMessage(msg);
-  assert.equal(threadName, "@Grok summarize the outage");
-  assert.deepEqual(calls[0].input, [{ role: "user", content: "ana!: @Grok summarize the outage" }]);
-  assert.match(calls[0].instructions, /in a thread in #general on the "Team" server/);
-  assert.deepEqual(thread.sent, [{ content: "Hello!", allowedMentions: { parse: [], repliedUser: false } }]);
-  assert.equal(ch.sent.length + msg.replies.length, 0);
-
   // Follow-ups in that thread need no mention and include the thread history.
   const bot = { ...message({ id: "m2", author: BOT.id, content: "Hello!", ch: thread }), author: { id: BOT.id, bot: true, username: "Grok" } };
   const followUp = message({ id: "m3", author: "bo", content: "and the root cause?", ch: thread, mentions: false });
   thread.messages.fetch = async () => new Map([followUp, bot].map((m) => [m.id, m]));
   await onMessage(followUp);
-  assert.deepEqual(calls[1].input, [
+  assert.deepEqual(calls[0].input, [
     { role: "assistant", content: "Hello!" },
     { role: "user", content: "bo!: and the root cause?" },
   ]);
-  assert.equal(thread.sent.length, 2);
+  assert.equal(thread.sent.length, 1);
+  assert.equal(calls.length, 1);
 });
 
-test("without thread permission it replies inline", async () => {
+test("channel mentions reply inline even where threads are not allowed", async () => {
   const { onMessage } = setup();
   const ch = channel();
   const msg = message({ ch });

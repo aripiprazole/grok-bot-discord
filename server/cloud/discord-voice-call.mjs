@@ -1,8 +1,8 @@
-// Joins a Discord voice channel from the container. The adapter is registered synchronously
-// so gateway packets can arrive before ElevenLabs provisioning finishes.
+// Joins a Discord voice channel from the voice host. The adapter is registered synchronously
+// so gateway packets can arrive before the speech-to-text check finishes.
 
 import { VoiceConnectionStatus, entersState, joinVoiceChannel } from "@discordjs/voice";
-import { bindElevenToConnection } from "../live/voice/eleven-call.mjs";
+import { bindVoiceToConnection } from "../live/voice/call.mjs";
 
 const CONNECT_TIMEOUT_MS = 20_000;
 
@@ -10,7 +10,7 @@ export function startDiscordCall(spec, hooks, deps = {}) {
   const join = deps.joinVoiceChannel ?? joinVoiceChannel;
   const enters = deps.entersState ?? entersState;
   const Status = deps.VoiceConnectionStatus ?? VoiceConnectionStatus;
-  const bind = deps.bind ?? bindElevenToConnection;
+  const bind = deps.bind ?? bindVoiceToConnection;
   const pending = [];
   let methods = null;
   let stopped = false;
@@ -52,9 +52,9 @@ export function startDiscordCall(spec, hooks, deps = {}) {
     feed(packet) {
       if (!stopped && packet) deliver(packet);
     },
-    say(content) {
-      if (!binder) throw new Error("The voice call isn't connected to ElevenLabs yet.");
-      return binder.say(content);
+    say(content, opts) {
+      if (!binder) throw new Error("The voice call isn't connected yet.");
+      return binder.say(content, opts);
     },
     stop(reason) {
       if (stopped) return;
@@ -73,22 +73,15 @@ export function startDiscordCall(spec, hooks, deps = {}) {
   try {
     binder = bind(connection, {
       apiKey: spec.elevenApiKey,
-      agentId: spec.agentId || null,
       voiceId: spec.voiceId || null,
-      instructions: spec.instructions,
-      canHear: (userId) => spec.listen !== "me" || userId === spec.hostId,
-      callInfo: {
-        guildId: spec.guildId,
-        channelId: spec.channelId,
-        place: spec.place,
-        listen: spec.listen,
-        hostId: spec.hostId ?? null,
-      },
+      ttsModel: spec.ttsModel || undefined,
+      language: spec.language || null,
+      // Never transcribe ourselves.
+      canHear: (userId) => userId !== spec.userId && (spec.listen !== "me" || userId === spec.hostId),
       maxMinutes: spec.maxMinutes ?? 60,
-      onTranscript: (text) => hooks.onTranscript?.(text),
+      onUtterance: (u) => hooks.onUtterance?.(u),
+      onSpoken: (text) => hooks.onTranscript?.(text),
       onError: (err) => hooks.onStatus?.(`error: ${err.message}`),
-      onAgentRequest: (payload) => hooks.onAgentRequest?.(payload),
-      onClose: (code, reason) => session.stop(code === 1000 ? null : `ElevenLabs disconnected (${code}${reason ? `: ${reason}` : ""}).`),
       onLimit: (reason) => session.stop(reason),
       log: hooks.log ?? console,
     });

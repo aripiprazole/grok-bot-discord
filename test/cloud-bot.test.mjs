@@ -96,6 +96,60 @@ test("mentions land in the inbox and an inline reply does not start a thread", a
   assert.equal(posted.body.content, "inline");
 });
 
+function mention(content, extra = {}) {
+  return {
+    id: "400000000000000002",
+    type: 0,
+    channel_id: GENERAL,
+    guild_id: GUILD,
+    timestamp: "2026-10-18T01:00:00.000Z",
+    content,
+    author: { id: "111111111111111111", username: "gabi", global_name: "Gabi" },
+    mentions: [{ id: BOT, username: "Nova" }, { id: "222222222222222222", username: "ana", global_name: "Ana", member: { nick: "Aninha" } }],
+    ...extra,
+  };
+}
+
+test("replies are inline by default; thread true starts a thread titled with names, not ids", async () => {
+  const client = fakeClient();
+  const { bot: created } = bot(client);
+  await online(client, created);
+  await created.dispatch("GUILD_ROLE_CREATE", { guild_id: GUILD, role: { id: "333333333333333333", name: "Mods" } });
+  await created.dispatch("MESSAGE_CREATE", mention("hello nova"));
+  let id = (await created.handle("inbox.check", {})).match(/item (\w+)/)[1];
+  await created.handle("inbox.reply", { itemId: id, content: "inline by default" });
+  assert.equal(client.calls.some((call) => call.path.includes("/threads")), false);
+  assert.equal(client.calls.at(-1).body?.message_reference?.message_id ?? client.calls.find((c) => c.body?.content === "inline by default").body.message_reference.message_id, "400000000000000002");
+
+  await created.dispatch("MESSAGE_CREATE", mention(`<@${BOT}> ask <@!222222222222222222> and <@&333333333333333333> about <#${GENERAL}>`, { id: "400000000000000003" }));
+  id = (await created.handle("inbox.check", {})).match(/item (\w+)/)[1];
+  await created.handle("inbox.reply", { itemId: id, content: "in a thread", thread: true });
+  const started = client.calls.find((call) => call.path.includes("/threads"));
+  assert.equal(started.body.name, "ask @Aninha and @Mods about #general");
+});
+
+test("other bots reach the inbox marked as bots; our own messages and webhooks don't", async () => {
+  const client = fakeClient();
+  const { bot: created } = bot(client);
+  await online(client, created);
+  await created.dispatch("MESSAGE_CREATE", mention("from me", { author: { id: BOT, username: "Nova", bot: true } }));
+  await created.dispatch("MESSAGE_CREATE", mention("our webhook", { id: "400000000000000004", webhook_id: "app", author: { id: "555555555555555555", username: "hook", bot: true } }));
+  assert.equal(await created.handle("inbox.check", {}), "The Discord inbox is empty. Nothing to answer.");
+  await created.dispatch("MESSAGE_CREATE", mention("hi from another bot", { id: "400000000000000005", author: { id: "444444444444444444", username: "otherbot", bot: true } }));
+  assert.match(await created.handle("inbox.check", {}), /otherbot \(@otherbot, id 444444444444444444, a bot\): hi from another bot/);
+});
+
+test("voice say carries the spoken language", async () => {
+  const client = fakeClient();
+  const { bot: created, effects } = bot(client);
+  await online(client, created);
+  await created.handle("join", { channelId: VOICE });
+  await created.handle("voice.say", { content: "Oi gente", language: "pt" });
+  assert.deepEqual(effects.at(-1), { type: "voice_say", guildId: GUILD, content: "Oi gente", language: "pt" });
+  assert.equal(effects.find((e) => e.type === "voice_start").spec.instructions, undefined, "no voice-agent prompt");
+  assert.equal(await created.memberName(GUILD, BOT), "Nova");
+});
+
 test("an edit updates the inbox text and a delete is marked deleted", async () => {
   const client = fakeClient();
   const { bot: created } = bot(client);

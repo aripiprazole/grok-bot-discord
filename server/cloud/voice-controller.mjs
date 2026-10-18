@@ -23,7 +23,7 @@ export function createVoiceController({ startCall }) {
           sendPayload: (payload) => send(ws, { type: "gateway", payload }),
           onEnded: (reason) => send(ws, { type: "ended", reason: reason ?? null }),
           onStatus: (state) => send(ws, { type: "status", state }),
-          onAgentRequest: ({ request, call }) => send(ws, { type: "agent_request", request, call }),
+          onUtterance: ({ userId, text, language }) => send(ws, { type: "utterance", userId, text, language: language ?? null, at: new Date().toISOString() }),
           onTranscript: (text) => send(ws, { type: "transcript", text }),
         });
         return;
@@ -33,7 +33,7 @@ export function createVoiceController({ startCall }) {
       else if (msg.type === "voice_server") session.feed({ t: "VOICE_SERVER_UPDATE", d: msg.data });
       else if (msg.type === "say") {
         try {
-          session.say(msg.content);
+          session.say(msg.content, { language: msg.language ?? null });
         } catch (err) {
           send(ws, { type: "status", state: "error", error: err.message });
         }

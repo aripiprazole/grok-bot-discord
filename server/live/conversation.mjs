@@ -6,12 +6,13 @@ const MAX_SOURCES = 5;
 
 /**
  * How to answer a message, mirroring Grok Bot's Slack behavior:
- * DMs always; channels when mentioned (the reply starts a thread); threads the bot
+ * DMs always; channels when mentioned (answered inline); threads the bot
  * started or was pulled into; every message in LISTEN_CHANNEL_IDS.
  * Returns "dm" | "thread" | "channel" | null.
  */
 export function respondMode(m, { listenChannelIds, followedThreads }) {
-  if (m.authorIsBot) return null;
+  // Other bots are answered like people (the agent sees they're bots). Only our own messages are ignored.
+  if (m.authorIsSelf) return null;
   if (m.isDM) return "dm";
   if (m.inThread) {
     const follows = m.threadOwnedByBot || followedThreads.has(m.channelId) || listenChannelIds.has(m.parentId);
@@ -54,6 +55,7 @@ export function buildInstructions({ botName, place, now = new Date(), extra }) {
     "Each message from a person starts with their display name; several people may be talking.",
     "Write Discord markdown: short paragraphs, lists, code blocks. Discord does not render tables, so never use them.",
     "Be concise and direct. Never @mention anyone, and never use @everyone or @here.",
+    "Answer in the language the person wrote in.",
     `Current date and time (UTC): ${now.toISOString()}.`,
     extra,
   ]
@@ -76,12 +78,39 @@ export function formatReply(text, sources = []) {
   return links.length ? `${body}\n${SOURCES_PREFIX} ${links.join(" · ")}` : body;
 }
 
-export function threadName(text) {
-  const firstLine = text
+// Turns raw Discord markup into what people see: <@123> → @Gabi, <@&456> → @Mods, <#789> → #general.
+// Lookups are functions returning a name or null. Unknown ids become "@someone", "@role", "#channel".
+export function resolveMentions(text, { user = () => null, role = () => null, channel = () => null } = {}) {
+  return String(text ?? "")
+    .replace(/<@!?(\d+)>/g, (_, id) => `@${user(id) ?? "someone"}`)
+    .replace(/<@&(\d+)>/g, (_, id) => `@${role(id) ?? "role"}`)
+    .replace(/<#(\d+)>/g, (_, id) => `#${channel(id) ?? "channel"}`)
+    .replace(/<\/([\w-]+(?: [\w-]+)*):\d+>/g, "/$1")
+    .replace(/<t:(\d+)(?::[tTdDfFR])?>/g, (_, ts) => new Date(Number(ts) * 1000).toISOString().slice(0, 10));
+}
+
+const TITLE_MAX = 90;
+
+// A thread title from the first line of a message: mentions resolved to names, custom emoji and
+// markdown stripped, and cut at a word boundary. Never raw <@123…> ids.
+export function threadName(text, lookup = {}, fallback = "Chat") {
+  const clean = (l) =>
+    resolveMentions(l, lookup)
+      .replace(/```|[*_~`|>]+/g, " ")
+      .replace(/\[([^\]]+)\]\(<?[^)]+>?\)/g, "$1")
+      .replace(/\s+/g, " ")
+      .trim();
+  const lines = String(text ?? "")
     .replace(/<a?:\w+:\d+>/g, "")
     .split("\n")
-    .map((l) => l.trim())
-    .find(Boolean);
-  if (!firstLine) return "Chat with Grok";
-  return firstLine.length > 90 ? `${firstLine.slice(0, 89)}…` : firstLine;
+    .filter((l) => l.trim());
+  // The leading ping ("<@bot> what's up") says nothing as a title; drop it when words follow.
+  const hasWords = (t) => /[\p{L}\p{N}]/u.test(t);
+  const stripped = lines.map((l) => clean(l.replace(/^(\s*<@[!&]?\d+>[\s,:]*)+/, "")));
+  const line = stripped.find(hasWords) || lines.map(clean).find(Boolean);
+  if (!line) return fallback;
+  if (line.length <= TITLE_MAX) return line;
+  const cut = line.slice(0, TITLE_MAX - 1);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > TITLE_MAX * 0.6 ? cut.slice(0, space) : cut).replace(/[\s,.;:!?-]+$/, "")}…`;
 }

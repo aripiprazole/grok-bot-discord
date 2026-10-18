@@ -8,7 +8,7 @@ export function loadLiveConfig(env = process.env) {
     token: setting(env.DISCORD_BOT_TOKEN),
     // Optional: REPLY_MODE=instant answers through the xAI Responses API.
     xaiApiKey: setting(env.XAI_API_KEY),
-    // Voice calls use ElevenLabs Agents. Optional for text-only bots.
+    // Voice calls use ElevenLabs speech-to-text and text-to-speech. Optional for text-only bots.
     elevenApiKey: setting(env.ELEVENLABS_API_KEY),
     // "agent": messages wait in the inbox for your agent's routine to answer with its own memory and tools.
     // "instant": Grok answers right away through the xAI API (needs XAI_API_KEY).
@@ -26,8 +26,8 @@ export function loadLiveConfig(env = process.env) {
     systemPrompt: setting(env.SYSTEM_PROMPT),
     historyLimit: 40,
     voice: {
-      agentId: setting(env.ELEVENLABS_AGENT_ID) ?? null,
       voiceId: setting(env.ELEVENLABS_VOICE_ID) ?? null,
+      ttsModel: setting(env.ELEVENLABS_TTS_MODEL) ?? null,
       transcripts: true,
       maxMinutes: 60,
     },

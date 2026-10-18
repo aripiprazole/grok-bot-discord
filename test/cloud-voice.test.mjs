@@ -32,7 +32,7 @@ test("voice control starts a call synchronously and forwards only the bot's voic
         entersState: () => held,
         VoiceConnectionStatus: { Ready: "ready", Disconnected: "disconnected", Signalling: "signalling", Connecting: "connecting", Destroyed: "destroyed" },
         bind() {
-          return { ready: Promise.resolve(), say(text) { started.push(text); }, stop() {} };
+          return { ready: Promise.resolve(), say(text, opts) { started.push([text, opts?.language ?? null]); }, stop() {} };
         },
       });
       session.methods = methods;
@@ -62,7 +62,8 @@ test("voice control starts a call synchronously and forwards only the bot's voic
   release();
   await attached.session.ready;
   ws.emit("message", JSON.stringify({ type: "say", content: "hello there" }));
-  assert.deepEqual(started, ["hello there"]);
+  ws.emit("message", JSON.stringify({ type: "say", content: "olá", language: "pt" }));
+  assert.deepEqual(started, [["hello there", null], ["olá", "pt"]]);
   ws.emit("message", JSON.stringify({ type: "ping" }));
   assert.equal(ws.sent.at(-1).type, "pong");
   const connection = attached.session.connection;

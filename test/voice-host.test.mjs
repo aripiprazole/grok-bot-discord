@@ -34,7 +34,8 @@ test("status names Fly when that host is configured and a missing host when it i
 
 test("the voice host fills a missing ElevenLabs key from its own environment", () => {
   assert.equal(withVoiceHostEnv({ elevenApiKey: "from-worker" }, { ELEVENLABS_API_KEY: "from-fly" }).elevenApiKey, "from-worker");
-  assert.equal(withVoiceHostEnv({ elevenApiKey: null, agentId: null }, { ELEVENLABS_API_KEY: "from-fly", ELEVENLABS_AGENT_ID: "agent" }).elevenApiKey, "from-fly");
+  assert.equal(withVoiceHostEnv({ elevenApiKey: null }, { ELEVENLABS_API_KEY: "from-fly" }).elevenApiKey, "from-fly");
+  assert.equal(withVoiceHostEnv({}, { ELEVENLABS_TTS_MODEL: "eleven_multilingual_v2" }).ttsModel, "eleven_multilingual_v2");
   assert.equal(withVoiceHostEnv({}, { ELEVENLABS_API_KEY: "from-fly", ELEVENLABS_VOICE_ID: "voice" }).voiceId, "voice");
 });
 

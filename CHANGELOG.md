@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0 — 2026-10-18
+
+- **Voice is transcription + speech only.** Calls no longer run an ElevenLabs conversational agent. Each speaker is transcribed in real time with ElevenLabs Scribe v2 Realtime (with per-utterance language detection), finished utterances go to the routine webhook as `source: discord-voice` with speaker and language, and the agent answers with `say_in_voice_call`, spoken by ElevenLabs text-to-speech (`eleven_flash_v2_5`, multilingual). `ELEVENLABS_AGENT_ID` and the `ask_agent` tool are gone; `ELEVENLABS_TTS_MODEL` is new. `say_in_voice_call` takes an optional `language`.
+- **Answers follow the speaker's language.** Voice transcripts carry the detected language, and the built-in prompts no longer assume English.
+- **Inline replies by default.** `reply_on_discord` replies to the message in the channel; pass `thread: true` to start a thread. Instant mode replies inline too.
+- **Readable thread titles.** Titles resolve `<@id>`, `<@!id>`, `<@&role>` and `<#channel>` to names, drop the leading bot ping, and cut at a word boundary.
+- **Other bots reach the inbox.** Messages from other bots are queued like anyone's and marked as bots. Only the bot's own messages and its own webhook posts are ignored. Instant mode still ignores bots.
+
 ## 0.4.0 — 2026-10-18
 
 - **Cloudflare.** The bot can run entirely on Cloudflare: a Worker serves the remote MCP endpoint, a Durable Object holds the Discord gateway and inbox, and a Container per voice call carries Discord's UDP audio.

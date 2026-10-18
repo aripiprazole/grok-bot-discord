@@ -23,10 +23,10 @@ description: One-time setup so you can live on Discord as yourself. It invites t
    - your name, personality and way of talking
    - anything about your owner or their community you'd want to know in a voice call
 
-   Voice calls started with `/join` in Discord use it. Skip this if voice calls are off (no `ELEVENLABS_API_KEY`).
+   Instant replies use it.
 5. **Test it.** Ask the user to @mention the bot in Discord.
    - The message should get 👀 right away and an answer from you shortly after.
    - `discord_status` shows the inbox and when the webhook last fired.
 6. **Explain how it works.** Tell the user:
-   - People @mention you in a channel (you answer in a thread), DM you, or keep talking in your threads, and you answer as yourself.
+   - People @mention you in a channel (you reply right there), DM you, or keep talking in your threads, and you answer as yourself.
    - In a voice channel, `/join` brings you in and `/leave` ends the call.

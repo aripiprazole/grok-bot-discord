@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { test } from "node:test";
 import { INPUT_FRAME_BYTES, Mixer, createUpmixer, discordToEleven, mix, resampleMono, ulawToPcm } from "../server/live/voice/audio.mjs";
-import { VoiceBridge } from "../server/live/voice/bridge.mjs";
-import { connectEleven, initiationMessage } from "../server/live/voice/eleven.mjs";
-import { ensureElevenAgent } from "../server/live/voice/eleven-agent.mjs";
-import { ASK_AGENT_RESULT, fireVoiceRequest, speakRequest } from "../server/live/voice/prompt.mjs";
+import { MIN_SPEECH_MS, SpeakerStream } from "../server/live/voice/call.mjs";
+import { createUtteranceBatcher, dominantLanguage, fireVoiceRequest, voiceWakeBody } from "../server/live/voice/prompt.mjs";
+import { cleanTranscript, connectScribe, isNoise, scribeUrl } from "../server/live/voice/scribe.mjs";
+import { DEFAULT_VOICE_ID, TTS_MODEL, synthesize, ttsLanguage, ttsRequest } from "../server/live/voice/tts.mjs";
 
 const pcm = (...samples) => {
   const b = Buffer.alloc(samples.length * 2);
@@ -49,65 +49,11 @@ test("mixer frames bursty audio per speaker and mixes one frame from each", () =
   assert.deepEqual(samples(m.next()), [3, 3], "oldest frames dropped past the cap");
 });
 
-function bridge(now) {
-  const calls = { sent: [], audio: [], interrupts: 0, done: 0, transcripts: [], errors: [], tools: [] };
-  const b = new VoiceBridge({
-    send: (e) => calls.sent.push(e),
-    onAudio: (buf) => calls.audio.push(buf),
-    onInterrupt: () => calls.interrupts++,
-    onResponseDone: () => calls.done++,
-    onTranscript: (t) => calls.transcripts.push(t),
-    onError: (e) => calls.errors.push(e.message),
-    onFunctionCall: (call) => calls.tools.push(call),
-    now: () => now.t,
-  });
-  return { b, calls };
-}
-
-test("bridge streams speech in 100 ms batches, then trailing silence, then goes quiet", () => {
-  const now = { t: 0 };
-  const { b, calls } = bridge(now);
-  b.tick();
-  for (let i = 0; i < 10; i++) b.pushUserAudio("u1", Buffer.alloc(3840, 1));
-  for (now.t = 20; now.t <= 3000; now.t += 20) b.tick();
-  const bytes = calls.sent.map((e) => Buffer.from(e.user_audio_chunk, "base64").length);
-  assert.ok(calls.sent.every((e) => e.user_audio_chunk));
-  assert.ok(bytes.every((n) => n <= 5 * INPUT_FRAME_BYTES));
-  const total = bytes.reduce((a, n) => a + n, 0) / INPUT_FRAME_BYTES;
-  assert.ok(total >= 69 && total <= 71, `sent ${total} frames`);
-});
-
-test("bridge routes ElevenLabs events and answers pings immediately", () => {
-  const { b, calls } = bridge({ t: 0 });
-  b.handleEvent({ type: "audio", audio_event: { audio_base_64: pcm(5, 6).toString("base64"), event_id: 1 } });
-  b.handleEvent({ type: "interruption" });
-  b.handleEvent({ type: "agent_response", agent_response_event: { agent_response: " Hello there " } });
-  b.handleEvent({ type: "agent_response_complete" });
-  b.handleEvent({ type: "ping", ping_event: { event_id: 7 } });
-  b.handleEvent({ type: "client_tool_call", client_tool_call: { tool_name: "ask_agent", tool_call_id: "c1", parameters: { request: "remember this" } } });
-  b.handleEvent({ type: "client_tool_call", client_tool_call: { tool_name: "ask_agent", tool_call_id: "c1", parameters: { request: "again" } } });
-  b.handleEvent({ type: "error", error: { message: "bad voice" } });
-  assert.deepEqual(samples(calls.audio[0]), [5, 6]);
-  assert.equal(calls.interrupts, 1);
-  assert.deepEqual(calls.transcripts, ["Hello there"]);
-  assert.equal(calls.done, 1);
-  assert.deepEqual(calls.sent[0], { type: "pong", event_id: 7 });
-  assert.equal(calls.tools.length, 1);
-  assert.equal(calls.tools[0].callId, "c1");
-  assert.deepEqual(calls.errors, ["bad voice"]);
-});
-
-test("initiation omits empty overrides and speak requests are user messages", () => {
-  assert.deepEqual(initiationMessage({}), { type: "conversation_initiation_client_data" });
-  assert.equal(initiationMessage({ instructions: "Be Nova", voiceId: "v" }).conversation_config_override.tts.voice_id, "v");
-  assert.match(speakRequest("The answer").text, /From the Grok Bot agent/);
-});
-
 class FakeSocket extends EventEmitter {
   static instances = [];
-  constructor(url) {
+  constructor(url, opts) {
     super();
-    Object.assign(this, { url, readyState: 0, sent: [] });
+    Object.assign(this, { url, opts, readyState: 0, sent: [] });
     FakeSocket.instances.push(this);
   }
   send(data) {
@@ -122,77 +68,128 @@ class FakeSocket extends EventEmitter {
   }
 }
 
-test("eleven client fetches a signed url and sends initiation", async () => {
+test("scribe url asks for manual commits, timestamps and language detection", () => {
+  const url = new URL(scribeUrl());
+  assert.equal(url.pathname, "/v1/speech-to-text/realtime");
+  assert.equal(url.searchParams.get("model_id"), "scribe_v2_realtime");
+  assert.equal(url.searchParams.get("audio_format"), "pcm_16000");
+  assert.equal(url.searchParams.get("commit_strategy"), "manual");
+  assert.equal(url.searchParams.get("include_language_detection"), "true");
+  assert.equal(url.searchParams.get("language_code"), null, "language is detected, not forced");
+});
+
+test("noise and non-speech tags are dropped", () => {
+  assert.equal(cleanTranscript("(music) oi [laughs] gente"), "oi gente");
+  assert.equal(isNoise(""), true);
+  assert.equal(isNoise("(background noise)"), true);
+  assert.equal(isNoise("uhm"), true);
+  assert.equal(isNoise("..."), true);
+  assert.equal(isNoise("ok"), false);
+  assert.equal(isNoise("tudo bem?"), false);
+});
+
+test("scribe client queues audio until open, commits, and reports text with its language", async () => {
   FakeSocket.instances = [];
-  const events = [];
-  const fetches = [];
-  const rt = connectEleven({
-    apiKey: "key",
-    agentId: "agent-1",
-    instructions: "Be Nova",
-    onEvent: (e) => events.push(e.type),
-    onClose: () => {},
-    fetchImpl: async (url) => {
-      fetches.push(url);
-      return new Response(JSON.stringify({ signed_url: "wss://signed.example/conversation" }));
-    },
-    WebSocketImpl: FakeSocket,
-  });
-  let ws;
-  for (let i = 0; i < 20 && !ws; i++) {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    ws = FakeSocket.instances.at(-1);
-  }
-  assert.ok(ws);
-  assert.match(fetches[0], /agent_id=agent-1/);
-  assert.equal(ws.url, "wss://signed.example/conversation");
+  const got = [];
+  const stt = connectScribe({ apiKey: "k", WebSocketImpl: FakeSocket, onCommitted: (u) => got.push(u) });
+  const ws = FakeSocket.instances.at(-1);
+  assert.equal(ws.opts.headers["xi-api-key"], "k");
+  stt.send(Buffer.alloc(320, 1));
+  stt.commit();
+  assert.equal(ws.sent.length, 0);
   ws.readyState = 1;
   ws.emit("open");
-  assert.equal(ws.sent[0].type, "conversation_initiation_client_data");
-  ws.serverSays({ type: "conversation_initiation_metadata", conversation_initiation_metadata_event: { agent_output_audio_format: "pcm_16000" } });
-  await rt.ready;
-  assert.deepEqual(events, ["conversation_initiation_metadata"]);
-  rt.close();
+  assert.deepEqual(ws.sent.map((m) => [m.message_type, m.commit, m.sample_rate]), [["input_audio_chunk", false, 16000], ["input_audio_chunk", true, 16000]]);
+  ws.serverSays({ message_type: "session_started", session_id: "s", config: {} });
+  await stt.ready;
+  ws.serverSays({ message_type: "committed_transcript", text: "Oi, gente, tudo bem?" });
+  assert.equal(got.length, 0, "waits for the language");
+  ws.serverSays({ message_type: "committed_transcript_with_timestamps", text: "Oi, gente, tudo bem?", language_code: "pt", words: [] });
+  assert.deepEqual(got, [{ text: "Oi, gente, tudo bem?", language: "pt" }]);
+  ws.serverSays({ message_type: "committed_transcript", text: "(silence)" });
+  ws.serverSays({ message_type: "committed_transcript_with_timestamps", text: "(silence)", language_code: "en" });
+  assert.equal(got.length, 1, "noise is not an utterance");
+  stt.close();
 });
 
-test("eleven connection errors reject ready", async () => {
-  const rt = connectEleven({
-    apiKey: "k",
-    agentId: "a",
-    onEvent() {},
-    onClose() {},
-    fetchImpl: async () => new Response("no", { status: 401 }),
-    WebSocketImpl: FakeSocket,
-  });
-  await assert.rejects(rt.ready, /signed URL failed/);
+test("scribe errors reject ready and quiet commits are ignored", async () => {
+  FakeSocket.instances = [];
+  const errors = [];
+  const stt = connectScribe({ apiKey: "k", WebSocketImpl: FakeSocket, onError: (e) => errors.push(e.message) });
+  const ws = FakeSocket.instances.at(-1);
+  ws.serverSays({ message_type: "insufficient_audio_activity", error: "quiet" });
+  assert.equal(errors.length, 0);
+  ws.serverSays({ message_type: "auth_error", error: "bad key" });
+  await assert.rejects(stt.ready, /auth_error: bad key/);
+  assert.equal(errors.length, 1);
 });
 
-test("ensureElevenAgent creates the tool and agent, then attaches the tool", async () => {
-  const calls = [];
-  const fetchImpl = async (url, init = {}) => {
-    calls.push({ url, method: init.method ?? "GET", body: init.body ? JSON.parse(init.body) : null });
-    const method = init.method ?? "GET";
-    if (url.endsWith("/v1/convai/tools") && method === "GET") return Response.json({ tools: [] });
-    if (url.endsWith("/v1/convai/tools")) return Response.json({ id: "tool-1" });
-    if (url.endsWith("/v1/convai/agents") && method === "GET") return Response.json({ agents: [] });
-    if (url.endsWith("/agents/create")) return Response.json({ agent_id: "agent-9" });
-    if (url.endsWith("/agents/agent-9") && (!init.method || init.method === "GET")) {
-      return Response.json({ conversation_config: { agent: { prompt: { prompt: "stay", llm: "glm", tool_ids: [] } } } });
-    }
-    return Response.json({ ok: true });
+function fakeConnect() {
+  const sockets = [];
+  const connect = (handlers) => {
+    const s = { handlers, sent: [], commits: 0, closed: false, ready: Promise.resolve(), send: (pcm) => s.sent.push(pcm.length), commit: () => s.commits++, close: () => (s.closed = true) };
+    sockets.push(s);
+    return s;
   };
-  const result = await ensureElevenAgent({ apiKey: "k", fetchImpl });
-  assert.deepEqual(result, { agentId: "agent-9", toolId: "tool-1" });
-  const patch = calls.find((call) => call.method === "PATCH");
-  assert.deepEqual(patch.body.conversation_config.agent.prompt.tool_ids, ["tool-1"]);
-  assert.equal(patch.body.conversation_config.agent.prompt.prompt, "stay");
+  return { sockets, connect };
+}
+
+test("a speaker's audio goes out in 100 ms chunks and is committed at end of speech", () => {
+  const { sockets, connect } = fakeConnect();
+  const heard = [];
+  const s = new SpeakerStream({ userId: "u1", connect, onUtterance: (u) => heard.push(u), log: {} });
+  for (let i = 0; i < 16; i++) s.push(Buffer.alloc(640)); // 16 × 20 ms
+  assert.deepEqual(sockets[0].sent, [3200, 3200, 3200]);
+  assert.equal(s.end(), true);
+  assert.deepEqual(sockets[0].sent, [3200, 3200, 3200, 640], "the tail is flushed before the commit");
+  assert.equal(sockets[0].commits, 1);
+  sockets[0].handlers.onCommitted({ text: "hello", language: "en" });
+  assert.deepEqual(heard, [{ userId: "u1", text: "hello", language: "en" }]);
 });
 
-test("voice handoff posts the routine webhook and does not wait on the agent", async () => {
+test("blips shorter than the minimum are not committed", () => {
+  const { sockets, connect } = fakeConnect();
+  const s = new SpeakerStream({ userId: "u1", connect, onUtterance() {}, log: {} });
+  const bytes = Math.floor((MIN_SPEECH_MS / 1000) * 16_000 * 2) - 640;
+  s.push(Buffer.alloc(bytes));
+  assert.equal(s.end(), false);
+  assert.equal(sockets[0]?.commits ?? 0, 0);
+});
+
+test("utterances close together are batched, then flushed after the pause", () => {
+  const timers = { fns: [], setTimeout: (fn) => (timers.fns.push(fn), timers.fns.length), clearTimeout: () => {} };
+  const flushed = [];
+  const b = createUtteranceBatcher({ onFlush: (u) => flushed.push(u), timers });
+  b.add({ text: "one" });
+  b.add({ text: "two" });
+  assert.equal(flushed.length, 0);
+  timers.fns.at(-1)();
+  assert.deepEqual(flushed, [[{ text: "one" }, { text: "two" }]]);
+});
+
+test("voice transcripts name the speaker and language, and ask for an answer in that language", () => {
+  const body = voiceWakeBody({
+    utterances: [
+      { speaker: "Gabi", speakerId: "1", text: "Oi bot, que horas são?", language: "pt" },
+      { speaker: "Ana", speakerId: "2", text: "kkkk", language: "pt" },
+    ],
+    call: { place: "🔊 passando raiva kkk (canudinhos)" },
+  });
+  assert.equal(body.source, "discord-voice");
+  assert.equal(body.kind, "voice_transcript");
+  assert.equal(body.language, "pt");
+  assert.equal(body.utterances[0].speaker, "Gabi");
+  assert.match(body.message, /Gabi \(id 1\) \[pt\]: Oi bot/);
+  assert.match(body.message, /in Portuguese/);
+  assert.match(body.message, /say_in_voice_call/);
+  assert.equal(dominantLanguage([{ language: "en" }, { language: "pt" }, { language: "pt" }]), "pt");
+});
+
+test("voice handoff posts the routine webhook", async () => {
   const bodies = [];
   const result = await fireVoiceRequest({
     webhook: { url: "https://api.cursor.com/automations/webhook/abc", key: "secret" },
-    request: "What did we decide?",
+    utterances: [{ speaker: "Gabi", text: "What did we decide?", language: "en" }],
     call: { place: "🔊 general (Team)", guildId: "g" },
     fetchImpl: async (url, init) => {
       bodies.push({ url, init: { ...init, body: JSON.parse(init.body) } });
@@ -201,7 +198,24 @@ test("voice handoff posts the routine webhook and does not wait on the agent", a
   });
   assert.equal(result.ok, true);
   assert.equal(bodies[0].init.headers.Authorization, "Bearer secret");
-  assert.equal(bodies[0].init.body.kind, "voice_request");
-  assert.match(bodies[0].init.body.message, /say_in_voice_call/);
-  assert.equal(ASK_AGENT_RESULT.includes("say that text out loud"), true);
+  assert.equal(bodies[0].init.body.request, "What did we decide?");
+  assert.match(bodies[0].init.body.message, /in English/);
+});
+
+test("text-to-speech uses a multilingual model, 48 kHz PCM and the spoken language", async () => {
+  assert.equal(ttsLanguage("por"), "pt");
+  assert.equal(ttsLanguage("pt-BR"), "pt");
+  assert.equal(ttsLanguage(""), null);
+  const req = ttsRequest({ text: "Oi", voiceId: null, language: "pt" });
+  assert.match(req.url, new RegExp(`/v1/text-to-speech/${DEFAULT_VOICE_ID}/stream\\?output_format=pcm_48000$`));
+  assert.deepEqual(req.body, { text: "Oi", model_id: TTS_MODEL, language_code: "pt" });
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push(JSON.parse(init.body));
+    return calls.length === 1 ? new Response("bad", { status: 400 }) : new Response(new Uint8Array([1, 2, 3, 4]));
+  };
+  const chunks = [];
+  for await (const c of synthesize({ apiKey: "k", text: "Oi", language: "pt", model: "other", fetchImpl })) chunks.push(c);
+  assert.equal(Buffer.concat(chunks).length, 4);
+  assert.equal(calls[1].language_code, undefined, "retries without language_code");
 });

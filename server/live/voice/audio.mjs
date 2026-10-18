@@ -1,6 +1,6 @@
-// PCM conversion between Discord voice (48 kHz stereo s16le) and ElevenLabs Agents (mono s16le).
+// PCM conversion between Discord voice (48 kHz stereo s16le) and ElevenLabs speech-to-text (16 kHz mono s16le).
 
-export const INPUT_RATE = 16_000; // PCM mono we send to ElevenLabs Agents
+export const INPUT_RATE = 16_000; // PCM mono we send to ElevenLabs speech-to-text
 export const DISCORD_RATE = 48_000;
 export const FRAME_MS = 20;
 export const INPUT_FRAME_BYTES = (INPUT_RATE / 1000) * FRAME_MS * 2;

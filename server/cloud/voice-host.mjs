@@ -47,8 +47,8 @@ export function withVoiceHostEnv(spec, env = process.env) {
   return {
     ...spec,
     elevenApiKey: spec?.elevenApiKey || setting(env.ELEVENLABS_API_KEY) || "",
-    agentId: spec?.agentId || setting(env.ELEVENLABS_AGENT_ID) || null,
     voiceId: spec?.voiceId || setting(env.ELEVENLABS_VOICE_ID) || null,
+    ttsModel: spec?.ttsModel || setting(env.ELEVENLABS_TTS_MODEL) || null,
   };
 }
 

@@ -11,7 +11,7 @@ The `discord` MCP server provides:
 - **Text:** `list_servers`, `list_channels`, `read_messages`, `send_message`, `edit_message`, `add_reaction`, `create_thread`.
 - **Voice:** `join_voice_channel`, `leave_voice_channel`, `say_in_voice_call`.
 - **Inbox:** `check_discord_inbox`, `reply_on_discord`, `skip_discord_message`. When people @mention you, DM you or write in your threads, their messages wait here (marked 👀) for you to answer as yourself. The `discord-inbox` skill handles this, and `discord-setup` creates the routine that runs it.
-- **Persona:** `set_discord_persona` saves who you are for voice calls.
+- **Persona:** `set_discord_persona` saves who you are for instant replies.
 
 The bot stays online by itself, and people can run `/join` and `/leave` in Discord.
 
@@ -28,10 +28,10 @@ The bot stays online by itself, and people can run `/join` and `/leave` in Disco
 
 ## Voice calls
 
-- `join_voice_channel` needs a voice channel; `list_channels` marks them `(voice)`. The bot then talks with people in the call using ElevenLabs.
+- `join_voice_channel` needs a voice channel; `list_channels` marks them `(voice)`. The bot then transcribes the call in real time with ElevenLabs and sends you what people say (speaker and language included).
 - Pass `listen_to_user_id` to have it respond to one person only. This is useful in busy calls.
 - It leaves by itself when the call empties. Use `leave_voice_channel` to end the call sooner.
-- If a voice request arrives (someone on the call asked the voice agent to check something), do the work and speak the answer with `say_in_voice_call`.
+- When a voice transcript arrives (`source` `discord-voice`), decide whether it needs an answer. If it does, speak it with `say_in_voice_call`, in the speaker's language. The voice side never answers on its own.
 - `send_message` and `reply_on_discord` can include `embeds`, `components` (buttons or a select menu), and `poll`. On the hosted bot, button presses and menu selections show up in `check_discord_inbox`.
 
 ## Before posting
