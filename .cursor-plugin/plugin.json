@@ -35,7 +35,7 @@
       "DISCORD_BOT_TOKEN": {
         "type": "string",
         "title": "Discord bot token",
-        "description": "From https://discord.com/developers/applications → your application → Bot → Reset Token. Also turn on Message Content Intent on that page. You can also enter a 1Password reference (op://vault/item/field) if the 1Password CLI is set up.",
+        "description": "From https://discord.com/developers/applications → your application → Bot → Reset Token. Also turn on Message Content Intent on that page.",
         "writeOnly": true,
         "format": "password",
         "minLength": 1

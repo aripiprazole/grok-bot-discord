@@ -61,8 +61,6 @@ grok-bot-discord reply_on_discord '{"item_id":"3f9a1c2e","content":"On it!"}'
 grok-bot-discord help   # every tool and its arguments
 ```
 
-**1Password:** any setting can be a secret reference like `op://Vault/Item/field`. It's read once at startup with the 1Password CLI (`op read`). Set `OP_CLI_PATH` if `op` isn't on `PATH`.
-
 ## Tools
 
 | Tool | |

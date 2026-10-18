@@ -20,7 +20,7 @@ const TOOL_LIST = TOOLS.map(({ handler, ...definition }) => definition);
 const ok = (id, result) => ({ jsonrpc: "2.0", id, result });
 const fail = (id, code, message) => ({ jsonrpc: "2.0", id, error: { code, message } });
 
-export function createHandler({ config = loadConfig(), fetchImpl, live, startupError = null } = {}) {
+export function createHandler({ config = loadConfig(), fetchImpl, live } = {}) {
   const ctx = createToolContext(config, fetchImpl, live);
 
   async function handleOne(msg) {
@@ -47,7 +47,6 @@ export function createHandler({ config = loadConfig(), fetchImpl, live, startupE
       case "tools/call": {
         const name = params?.name;
         if (!hasTool(name)) return fail(id, -32602, `Unknown tool: ${name}`);
-        if (startupError) return ok(id, { content: [{ type: "text", text: startupError }], isError: true });
         return ok(id, await callTool(name, params.arguments, ctx));
       }
       default:
