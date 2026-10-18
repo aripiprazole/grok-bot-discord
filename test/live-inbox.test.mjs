@@ -148,6 +148,22 @@ test("agent mode: 👀 on arrival, the agent sees the conversation, replies land
   await assert.rejects(agentInbox.reply({ itemId: id, content: "again" }), /already answered or expired/);
 });
 
+test("thread false replies inline in the channel", async () => {
+  const d = fakeDiscord();
+  const general = d.channel({ id: "100000000000000000" });
+  const mention = d.message(general, { id: "100000000000000002", content: "@Nova stay here" });
+  mention.reply = async ({ content }) => general.send({ content });
+  mention.startThread = async () => {
+    throw new Error("should stay inline");
+  };
+  const agentInbox = createAgentInbox({ client: d.client, inbox: new Inbox(), log: { warn() {} } });
+  const onMessage = createChatHandler({ client: d.client, config: loadLiveConfig({ DISCORD_BOT_TOKEN: "t" }), agentInbox });
+  await onMessage(mention);
+  const id = (await agentInbox.check()).match(/item (\w+)/)[1];
+  await agentInbox.reply({ itemId: id, content: "inline", thread: false });
+  assert.deepEqual(general.sent.map((m) => m.content), ["inline"]);
+});
+
 test("agent mode: DMs reply in place and can be skipped", async () => {
   const d = fakeDiscord();
   const dm = d.channel({ id: "300000000000000000", type: ChannelType.DM });

@@ -1,5 +1,6 @@
 // MCP tool definitions and handlers for the Discord bot.
 
+import { applyRevisions, COMPONENTS_SCHEMA, EMBED_SCHEMA, POLL_SCHEMA, richFields } from "./cloud/rich.mjs";
 import { createClient } from "./discord.mjs";
 import { MESSAGE_LIMIT, chunkMessage, formatChannels, formatMessages, jumpLink } from "./format.mjs";
 import { setting } from "./settings.mjs";
@@ -144,42 +145,49 @@ export const TOOLS = [
           after: optionalId(args.after, "after", "message"),
         }),
       ]);
-      if (!messages.length) return `No messages in ${channelLabel(channel)}.`;
-      const oldest = messages[messages.length - 1].id;
+      const annotated = await annotateMessages(ctx, channelId, messages);
+      if (!annotated.length) return `No messages in ${channelLabel(channel)}.`;
+      const oldest = messages[messages.length - 1]?.id;
       const more = messages.length === limit ? `\n\nOlder messages may exist: call again with before: "${oldest}".` : "";
-      return `${channelLabel(channel)} · ${messages.length} messages, oldest first · ${jumpLink(channel.guild_id, channelId)}\n\n${formatMessages(messages)}${more}`;
+      return `${channelLabel(channel)} · ${annotated.length} messages, oldest first · ${jumpLink(channel.guild_id, channelId)}\n\n${formatMessages(annotated)}${more}`;
     },
   },
   {
     name: "send_message",
     title: "Send Discord message",
     description:
-      "Post a message to a channel or thread as the bot, optionally as a reply. Supports Discord markdown; text over 2000 characters is split into several messages. @everyone, @here and role pings are suppressed.",
+      "Post a message to a channel or thread as the bot, optionally as a reply. Supports Discord markdown, plus an optional embed, components (buttons and select menus), or a poll. Text over 2000 characters is split into several messages; rich parts stay on the first one. @everyone, @here and role pings are suppressed.",
     inputSchema: {
       type: "object",
       properties: {
         channel_id: CHANNEL_ID_PROP,
-        content: { type: "string", description: "Message text (Discord markdown)." },
+        content: { type: "string", description: "Message text (Discord markdown). Optional when an embed, components, or a poll is set." },
         reply_to_message_id: { type: "string", description: "Message ID or link to reply to." },
         silent: { type: "boolean", default: false, description: "Send without push/desktop notifications." },
+        embeds: EMBED_SCHEMA,
+        components: COMPONENTS_SCHEMA,
+        poll: POLL_SCHEMA,
       },
-      required: ["content"],
       additionalProperties: false,
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     async handler(rawArgs, ctx) {
       const args = withLinkedChannel(rawArgs, "reply_to_message_id");
-      const content = requireText(args.content, "content");
+      const rich = richFields(args);
+      const content = args.content == null || args.content === "" ? "" : requireText(args.content, "content");
+      if (!content && !rich) throw new ToolInputError("content is required unless you pass embeds, components, or a poll.");
       const channelId = channelIdFrom(args, ctx.config);
       const replyTo = optionalId(args.reply_to_message_id, "reply_to_message_id", "message");
       const channel = await getChannel(ctx, channelId);
       const sent = [];
-      for (const [i, chunk] of chunkMessage(content).entries()) {
+      const chunks = content ? chunkMessage(content) : [""];
+      for (const [i, chunk] of chunks.entries()) {
         const message = await ctx.client.post(`/channels/${channelId}/messages`, {
-          content: chunk,
+          ...(chunk ? { content: chunk } : {}),
           allowed_mentions: ALLOWED_MENTIONS,
           ...(args.silent ? { flags: SUPPRESS_NOTIFICATIONS } : {}),
           ...(i === 0 && replyTo ? { message_reference: { message_id: replyTo, fail_if_not_exists: false } } : {}),
+          ...(i === 0 && rich ? rich : {}),
         });
         sent.push(message);
       }
@@ -309,7 +317,7 @@ export const TOOLS = [
       } else if (s.replyMode) {
         lines.push("Replies: instant (Grok answers right away).");
       }
-      if (s.replyMode) lines.push(`Persona for voice: ${s.persona ? "set" : "not set (set_discord_persona)"} · Voice calls: ${s.voiceEnabled ? "on" : "off (needs XAI_API_KEY)"}`);
+      if (s.replyMode) lines.push(`Persona for voice: ${s.persona ? "set" : "not set (set_discord_persona)"} · Voice calls: ${s.voiceEnabled ? "on" : "off (needs ELEVENLABS_API_KEY)"}`);
       if (s.invite) lines.push(`Invite link: ${s.invite}`);
       if (s.voice?.length) lines.push(...s.voice.map((v) => `In voice: 🔊 ${v.channel} (${v.server}), listening to ${v.listen}`));
       lines.push(`Log: ${ctx.live.logPath}`);
@@ -320,7 +328,7 @@ export const TOOLS = [
     name: "join_voice_channel",
     title: "Join Discord voice channel",
     description:
-      "Have the bot join a voice channel and talk with people using Grok realtime voice. It answers whoever speaks, or only `listen_to_user_id` if given. People in Discord can also use /join and /leave.",
+      "Have the bot join a voice channel and talk with people using ElevenLabs. It answers whoever speaks, or only `listen_to_user_id` if given. People in Discord can also use /join and /leave. During a call it can hand work to this agent; speak the answer back with say_in_voice_call.",
     inputSchema: {
       type: "object",
       properties: {
@@ -356,6 +364,25 @@ export const TOOLS = [
     },
   },
   {
+    name: "say_in_voice_call",
+    title: "Say in voice call",
+    description:
+      "Speak text out loud in the bot's live Discord voice call. Use this to answer a request that arrived from a voice call (source discord-voice). Pass server_id when the bot is in more than one call.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        content: { type: "string", description: "What to say, in your own voice. Keep it short enough to speak." },
+        server_id: { type: "string", description: "Server (guild) ID. Omit to speak in every current call." },
+      },
+      required: ["content"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    async handler(args, ctx) {
+      return ctx.live.call("voice.say", { content: requireText(args.content, "content"), serverId: optionalId(args.server_id, "server_id") }, 30_000);
+    },
+  },
+  {
     name: "check_discord_inbox",
     title: "Check Discord inbox",
     description:
@@ -375,19 +402,33 @@ export const TOOLS = [
     name: "reply_on_discord",
     title: "Reply on Discord",
     description:
-      "Answer an inbox item from check_discord_inbox, in your own voice. It's posted in the right place (a new thread for channel @mentions, otherwise the same DM or thread) and the item is marked done.",
+      "Answer an inbox item from check_discord_inbox, in your own voice. It's posted in the right place (a new thread for channel @mentions, otherwise the same DM or thread) and the item is marked done. Pass thread false to reply inline in the channel instead of starting a thread.",
     inputSchema: {
       type: "object",
       properties: {
         item_id: { type: "string", description: "The item id from check_discord_inbox." },
-        content: { type: "string", description: "Your reply (Discord markdown; long replies are split automatically)." },
+        content: { type: "string", description: "Your reply (Discord markdown; long replies are split automatically). Optional when an embed, components, or a poll is set." },
+        thread: {
+          type: "boolean",
+          description: "For a channel @mention, start a thread (default). Pass false to reply inline in the channel.",
+        },
+        embeds: EMBED_SCHEMA,
+        components: COMPONENTS_SCHEMA,
+        poll: POLL_SCHEMA,
       },
-      required: ["item_id", "content"],
+      required: ["item_id"],
       additionalProperties: false,
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     async handler(args, ctx) {
-      return ctx.live.call("inbox.reply", { itemId: requireText(args.item_id, "item_id").trim(), content: requireText(args.content, "content") }, 60_000);
+      const rich = richFields(args);
+      const content = args.content == null || args.content === "" ? "" : requireText(args.content, "content");
+      if (!content && !rich) throw new ToolInputError("content is required unless you pass embeds, components, or a poll.");
+      return ctx.live.call(
+        "inbox.reply",
+        { itemId: requireText(args.item_id, "item_id").trim(), content, thread: args.thread, ...(rich ?? {}) },
+        60_000,
+      );
     },
   },
   {
@@ -442,6 +483,17 @@ export const TOOLS = [
     },
   },
 ];
+
+async function annotateMessages(ctx, channelId, messages) {
+  if (!messages.length || ctx.live?.disabled || typeof ctx.live?.call !== "function") return messages;
+  try {
+    const notes = await ctx.live.call("messages.revisions", { channelId, ids: messages.map((message) => message.id) });
+    return applyRevisions(messages, notes);
+  } catch (err) {
+    if (/Unknown method/.test(err.message)) return messages;
+    throw err;
+  }
+}
 
 const BY_NAME = new Map(TOOLS.map((tool) => [tool.name, tool]));
 

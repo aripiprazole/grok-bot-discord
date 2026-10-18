@@ -1,7 +1,7 @@
 {
   "name": "discord-bot",
   "displayName": "Discord Bot",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "minClientVersions": {
     "cursor": "3.13.0"
   },
@@ -42,10 +42,27 @@
       },
       "XAI_API_KEY": {
         "type": "string",
-        "title": "xAI API key (for voice calls)",
-        "description": "Optional. From https://console.x.ai → API Keys. Needed for voice calls (/join) and for instant replies.",
+        "title": "xAI API key (instant replies only)",
+        "description": "Optional. From https://console.x.ai → API Keys. Only used when REPLY_MODE is instant. Voice calls use ElevenLabs instead.",
         "writeOnly": true,
         "format": "password"
+      },
+      "ELEVENLABS_API_KEY": {
+        "type": "string",
+        "title": "ElevenLabs API key (voice calls)",
+        "description": "Optional. From https://elevenlabs.io → API keys. Needed for /join and join_voice_channel. The hosted bot reads this from the ELEVENLABS_API_KEY secret.",
+        "writeOnly": true,
+        "format": "password"
+      },
+      "ELEVENLABS_AGENT_ID": {
+        "type": "string",
+        "title": "ElevenLabs agent id (optional)",
+        "description": "Existing ElevenLabs Conversational AI agent to use for voice. Leave empty and the bot creates or reuses an agent named grok-bot-discord and attaches the ask_agent client tool."
+      },
+      "ELEVENLABS_VOICE_ID": {
+        "type": "string",
+        "title": "ElevenLabs voice id (optional)",
+        "description": "Voice for calls. Applied as a per-call override when the agent allows it."
       },
       "REPLY_MODE": {
         "type": "string",

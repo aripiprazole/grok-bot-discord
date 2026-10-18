@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0 — 2026-10-18
+
+- **Cloudflare.** The bot can run entirely on Cloudflare: a Worker serves the remote MCP endpoint, a Durable Object holds the Discord gateway and inbox, and a Container per voice call carries Discord's UDP audio.
+- **ElevenLabs voice.** Voice calls use ElevenLabs Conversational AI instead of xAI realtime voice. Set `ELEVENLABS_API_KEY`. `ELEVENLABS_AGENT_ID` and `ELEVENLABS_VOICE_ID` are optional. `XAI_API_KEY` is only for `REPLY_MODE=instant`.
+- **Voice bridge.** During a call the ElevenLabs agent can call `ask_agent`, which wakes the Grok Bot routine. Speak the answer back with `say_in_voice_call`.
+- **Inline replies.** `reply_on_discord` takes `thread: false` to answer a channel @mention in the channel instead of starting a thread.
+- **Hosted rich messages.** On the Cloudflare bot, `send_message` and `reply_on_discord` can attach embeds, buttons, select menus, and polls. Button presses and menu selections are queued in the inbox.
+- **Hosted edits and deletes.** The Cloudflare gateway listens for `MESSAGE_UPDATE` and `MESSAGE_DELETE`. Inbox transcripts and `read_messages` mark those messages edited or deleted.
+
 ## 0.3.0 — 2026-10-17
 
 - **Agent mode** (the default): Discord messages go to an inbox, marked 👀, and your agent answers them as itself, with its own memory and tools.

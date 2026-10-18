@@ -41,7 +41,7 @@ test("speaks MCP over stdio", async () => {
   assert.equal(init.serverInfo.name, "discord-bot");
 
   const names = byId.get(2).result.tools.map((t) => t.name);
-  assert.deepEqual(names, ["list_servers", "list_channels", "read_messages", "send_message", "edit_message", "add_reaction", "create_thread", "discord_status", "join_voice_channel", "leave_voice_channel", "check_discord_inbox", "reply_on_discord", "skip_discord_message", "set_discord_persona", "connect_discord_routine"]);
+  assert.deepEqual(names, ["list_servers", "list_channels", "read_messages", "send_message", "edit_message", "add_reaction", "create_thread", "discord_status", "join_voice_channel", "leave_voice_channel", "say_in_voice_call", "check_discord_inbox", "reply_on_discord", "skip_discord_message", "set_discord_persona", "connect_discord_routine"]);
   for (const t of byId.get(2).result.tools) {
     assert.equal(t.inputSchema.type, "object");
     assert.equal(t.handler, undefined);

@@ -34,10 +34,12 @@ export async function startThread(message, log = console) {
 }
 
 // Posts `text` (split at Discord's limit) to `target`; the first part replies to `replyTo` if given.
-export async function post(target, text, replyTo = null) {
+export async function post(target, text, replyTo = null, extras = null) {
   const sent = [];
-  for (const [i, content] of chunkMessage(text).entries()) {
-    sent.push(i === 0 && replyTo ? await replyTo.reply({ content, allowedMentions: NO_PINGS }) : await target.send({ content, allowedMentions: NO_PINGS }));
+  const chunks = text?.trim() ? chunkMessage(text) : extras ? [""] : [];
+  for (const [i, content] of chunks.entries()) {
+    const payload = { ...(content ? { content } : {}), allowedMentions: NO_PINGS, ...(i === 0 && extras ? extras : {}) };
+    sent.push(i === 0 && replyTo ? await replyTo.reply(payload) : await target.send(payload));
   }
   return sent;
 }

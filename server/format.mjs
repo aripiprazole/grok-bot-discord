@@ -69,7 +69,9 @@ const isHumanWithoutText = (m) =>
   !m.author?.bot && !m.content && !m.attachments?.length && !m.embeds?.length && !m.sticker_items?.length;
 
 export function formatMessage(m) {
-  const lines = [`[${formatTime(m.timestamp)}] ${authorName(m.author)} · id ${m.id}${m.edited_timestamp ? " · edited" : ""}`];
+  const edited = !m.deleted && (m.edited || m.edited_timestamp);
+  const flag = m.deleted ? " · deleted" : edited ? " · edited" : "";
+  const lines = [`[${formatTime(m.timestamp)}] ${authorName(m.author)} · id ${m.id}${flag}`];
   if (m.referenced_message) {
     const quoted = truncate(m.referenced_message.content?.replace(/\s+/g, " ") ?? "", 80);
     lines.push(`  ↪ replying to ${authorName(m.referenced_message.author)} (${m.referenced_message.id}): "${quoted}"`);
@@ -77,6 +79,7 @@ export function formatMessage(m) {
     lines.push(`  ↪ replying to ${m.message_reference.message_id}`);
   }
   if (m.content) lines.push(indent(m.content));
+  else if (m.deleted) lines.push("  (deleted)");
   else if (m.type !== 0 && m.type !== 19) lines.push(`  (system message, type ${m.type})`);
   for (const a of m.attachments ?? []) lines.push(`  📎 ${a.filename} ${a.url}`);
   for (const e of m.embeds ?? []) {

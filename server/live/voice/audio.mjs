@@ -1,18 +1,63 @@
-// PCM conversion between Discord voice (48 kHz stereo s16le) and Grok realtime (mono s16le).
+// PCM conversion between Discord voice (48 kHz stereo s16le) and ElevenLabs Agents (mono s16le).
 
-export const INPUT_RATE = 24_000; // what we send to Grok
-export const OUTPUT_RATE = 48_000; // what we ask Grok to send back (Discord's native rate)
+export const INPUT_RATE = 16_000; // PCM mono we send to ElevenLabs Agents
+export const DISCORD_RATE = 48_000;
 export const FRAME_MS = 20;
 export const INPUT_FRAME_BYTES = (INPUT_RATE / 1000) * FRAME_MS * 2;
 
 const clamp = (n) => (n > 32767 ? 32767 : n < -32768 ? -32768 : n);
 
-// 48 kHz stereo → 24 kHz mono: average each pair of stereo frames (4 samples → 1).
-export function discordToGrok(pcm) {
-  const out = Buffer.alloc(Math.floor(pcm.length / 8) * 2);
-  for (let i = 0, o = 0; o < out.length; i += 8, o += 2) {
-    const sum = pcm.readInt16LE(i) + pcm.readInt16LE(i + 2) + pcm.readInt16LE(i + 4) + pcm.readInt16LE(i + 6);
-    out.writeInt16LE(Math.round(sum / 4), o);
+// 48 kHz stereo → 16 kHz mono: average three stereo frames (6 samples → 1).
+export function discordToEleven(pcm) {
+  const frames = Math.floor(pcm.length / 12);
+  const out = Buffer.alloc(frames * 2);
+  for (let i = 0, o = 0; o < out.length; i += 12, o += 2) {
+    let sum = 0;
+    for (let j = 0; j < 12; j += 2) sum += pcm.readInt16LE(i + j);
+    out.writeInt16LE(clamp(Math.round(sum / 6)), o);
+  }
+  return out;
+}
+
+// "pcm_16000" → 16000, "ulaw_8000" → 8000, anything else → null.
+export function pcmRate(format) {
+  if (format === "ulaw_8000") return 8000;
+  const match = /^pcm_(\d+)$/.exec(format ?? "");
+  return match ? Number(match[1]) : null;
+}
+
+// G.711 μ-law byte → PCM. 0xFF is silence.
+export function ulawToPcm(ulaw) {
+  const out = Buffer.alloc(ulaw.length * 2);
+  for (let i = 0; i < ulaw.length; i++) {
+    let u = ~ulaw[i] & 0xff;
+    const sign = u & 0x80;
+    const exponent = (u >> 4) & 0x07;
+    const mantissa = u & 0x0f;
+    let sample = ((mantissa << 3) + 0x84) << exponent;
+    sample -= 0x84;
+    if (sign) sample = -sample;
+    out.writeInt16LE(clamp(sample), i * 2);
+  }
+  return out;
+}
+
+// Linear resample of mono s16le. Exact ratios (16 kHz → 48 kHz) stay in sync.
+export function resampleMono(pcm, fromRate, toRate) {
+  if (!fromRate || fromRate === toRate) return pcm;
+  const inSamples = Math.floor(pcm.length / 2);
+  if (!inSamples) return Buffer.alloc(0);
+  const outSamples = Math.max(1, Math.round((inSamples * toRate) / fromRate));
+  const out = Buffer.alloc(outSamples * 2);
+  const last = inSamples - 1;
+  for (let i = 0; i < outSamples; i++) {
+    const x = (i * fromRate) / toRate;
+    const i0 = Math.min(last, Math.floor(x));
+    const i1 = Math.min(last, i0 + 1);
+    const frac = x - i0;
+    const s0 = pcm.readInt16LE(i0 * 2);
+    const s1 = pcm.readInt16LE(i1 * 2);
+    out.writeInt16LE(clamp(Math.round(s0 + (s1 - s0) * frac)), i * 2);
   }
   return out;
 }

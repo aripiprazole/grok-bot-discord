@@ -23,7 +23,7 @@ function usage() {
     `grok-bot-discord ${SERVER_INFO.version}: Discord for agents.`,
     "",
     "Usage: grok-bot-discord <tool> ['{\"json\":\"arguments\"}' | -]   (- reads the JSON from stdin)",
-    `Settings: DISCORD_BOT_TOKEN (required), XAI_API_KEY, REPLY_MODE, ROUTINE_WEBHOOK_URL/KEY, ALLOWED_IDS, ALLOWED_CHANNEL_IDS, LISTEN_CHANNEL_IDS`,
+    `Settings: DISCORD_BOT_TOKEN (required), ELEVENLABS_API_KEY (voice), ELEVENLABS_AGENT_ID, ELEVENLABS_VOICE_ID, XAI_API_KEY (instant replies), REPLY_MODE, ROUTINE_WEBHOOK_URL/KEY, ALLOWED_IDS, ALLOWED_CHANNEL_IDS, LISTEN_CHANNEL_IDS`,
     `          from the environment or ${CONFIG_FILE}`,
     "",
     "Tools:",

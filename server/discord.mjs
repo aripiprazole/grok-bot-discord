@@ -2,7 +2,7 @@
 
 export const API_BASE = "https://discord.com/api/v10";
 
-const USER_AGENT = "DiscordBot (https://github.com/aripiprazole/grok-bot-discord, 0.3.0)";
+const USER_AGENT = "DiscordBot (https://github.com/aripiprazole/grok-bot-discord, 0.4.0)";
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_RETRIES = 3;
 const MAX_RETRY_WAIT_S = 10;
@@ -79,6 +79,7 @@ export function createClient({ token, fetchImpl = globalThis.fetch, wait = sleep
     get: (path, query) => request("GET", path, { query }),
     post: (path, body) => request("POST", path, { body }),
     patch: (path, body) => request("PATCH", path, { body }),
-    put: (path) => request("PUT", path),
+    put: (path, body) => request("PUT", path, { body }),
+    delete: (path) => request("DELETE", path),
   };
 }
