@@ -109,7 +109,7 @@ grok-bot-discord help   # every tool and its arguments
 
 ## Run on Cloudflare
 
-The hosted bot does not need a personal computer. A Worker serves MCP. One Durable Object keeps the Discord gateway and the inbox. Voice runs in a Container because Discord voice is UDP, and Workers cannot send UDP.
+The hosted bot does not need a personal computer. A Worker serves MCP. One Durable Object keeps the Discord gateway and the inbox. Voice cannot run on the Worker: Discord voice is UDP, and Workers cannot send UDP. On the Workers Free plan the voice host is a Fly.io Machine. A Cloudflare Container remains available on a paid Workers plan.
 
 Tradeoff: the gateway, inbox, MCP, and webhooks stay on a Worker, which is the cheap always-on part. An outbound WebSocket to Discord keeps that Durable Object alive, with a 30 second alarm and a cron trigger as backup. Each voice call starts a Container (`basic` instance, internet on so UDP to Discord works) and talks to ElevenLabs over a WebSocket. Containers need a paid Workers plan, Docker on the machine that runs `wrangler deploy`, and a few seconds of cold start when someone joins. The `durable_object` scheduling policy picks the image and instance size in code; concurrent calls count against the account's container quota, one container per server.
 
@@ -146,13 +146,53 @@ On the Workers Free plan, deploy with `wrangler.novoice.jsonc`: the same Worker 
 npx wrangler deploy --config ../wrangler.novoice.jsonc
 ```
 
-`GATEWAY_ENABLED` (a var, default `true`) controls the Discord gateway connection. With `"false"`, neither the cron nor MCP calls open the gateway, and REST tools still work. Use that while another process runs the same bot token. Set it to `"true"` and redeploy to cut over. To add voice later, upgrade to Workers Paid and deploy with `wrangler.jsonc` from a machine with Docker. Wrangler builds `voice.Dockerfile` and pushes it to Cloudflare's registry.
+`GATEWAY_ENABLED` (a var, default `true`) controls the Discord gateway connection. With `"false"`, neither the cron nor MCP calls open the gateway, and REST tools still work. Use that while another process runs the same bot token. Set it to `"true"` and redeploy to cut over. `wrangler.novoice.jsonc` sets it to `"true"`.
 
 From `cloudflare/`, `npm run deploy:novoice` and `npm run check:novoice` use that config. `npm run check:novoice` is a dry run and does not need Docker.
 
-### Deploy with voice from GitHub Actions
+### Voice on Fly.io
 
-The voice image is built with Docker during `wrangler deploy`. GitHub-hosted runners include Docker, so the manual workflow [`.github/workflows/deploy-voice.yml`](.github/workflows/deploy-voice.yml) can deploy the full config from Actions. It does not run on push. Add repository secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` (Settings → Secrets and variables → Actions), then start **Deploy with voice** from the Actions tab. The workflow runs `npx wrangler deploy --config ../wrangler.jsonc`. The token needs permission to deploy Workers and Container images. Wrangler reads those two variables itself.
+The free-plan Worker stays as it is. Voice runs on one always-on Fly Machine in São Paulo (`gru`), `shared-cpu-1x` with 512 MB. `auto_stop_machines` is `"off"` and `min_machines_running` is 1. Discord voice UDP leaves the Machine directly; nothing publishes a public UDP port. The image is the same `voice.Dockerfile` the Container path uses.
+
+The Durable Object opens `wss://<app>.fly.dev/control` with `Authorization: Bearer <VOICE_HOST_SECRET>` when `VOICE_HOST` (the Container binding) is absent and both `VOICE_HOST_URL` and `VOICE_HOST_SECRET` are set. It forwards `VOICE_STATE_UPDATE` and `VOICE_SERVER_UPDATE`, and sends the voice host's gateway payloads back out the Discord gateway. `join_voice_channel`, `leave_voice_channel`, `say_in_voice_call`, `/join`, and `/leave` use that socket. `ask_agent` still posts the routine webhook from the Durable Object, so `ROUTINE_WEBHOOK_URL` and `ROUTINE_WEBHOOK_KEY` stay on the Worker.
+
+If the Container binding is present (`wrangler.jsonc`), it wins and Fly is not used.
+
+One-time setup, from the repo root (install [flyctl](https://fly.io/docs/flyctl/install/) first). Change the app name in `fly.toml` if `grok-bot-discord-voice` is taken:
+
+```sh
+fly auth login
+fly apps create grok-bot-discord-voice
+fly secrets set \
+  VOICE_HOST_SECRET="$(openssl rand -hex 32)" \
+  ELEVENLABS_API_KEY="..." \
+  -a grok-bot-discord-voice
+# optional
+fly secrets set ELEVENLABS_AGENT_ID="..." ELEVENLABS_VOICE_ID="..." -a grok-bot-discord-voice
+fly deploy --ha=false
+```
+
+`--ha=false` keeps a single Machine. `fly status` should show one started Machine in `gru`. Then point the live Worker at it (this deploys a new Worker version):
+
+```sh
+cd cloudflare
+npx wrangler secret put VOICE_HOST_URL --config ../wrangler.novoice.jsonc
+# https://grok-bot-discord-voice.fly.dev
+npx wrangler secret put VOICE_HOST_SECRET --config ../wrangler.novoice.jsonc
+# the same VOICE_HOST_SECRET value
+```
+
+`discord_status` then says `Voice calls: on (Fly.io)`. `ELEVENLABS_API_KEY` on the Worker is optional in this setup: the Fly Machine supplies it. If the Worker secret is also set, that value is sent on the control socket and used instead.
+
+Do not set `DISCORD_BOT_TOKEN` on Fly. The Durable Object already holds the gateway. Do not set `ROUTINE_WEBHOOK_URL` or `ROUTINE_WEBHOOK_KEY` on Fly. The voice bridge posts from the Worker.
+
+#### Deploy the Fly voice host from GitHub Actions
+
+[`.github/workflows/deploy-fly-voice.yml`](.github/workflows/deploy-fly-voice.yml) is `workflow_dispatch` only. It does not run on push. Create the Fly app and set the Fly secrets above first. Add the repository secret `FLY_API_TOKEN` (Settings → Secrets and variables → Actions; `fly tokens create deploy` or a token that can deploy this app), then start **Deploy voice on Fly**. The workflow runs `flyctl deploy --remote-only --ha=false`. It does not set secrets.
+
+### Deploy the Cloudflare Container from GitHub Actions
+
+The Container path needs a paid Workers plan. The voice image is built with Docker during `wrangler deploy`. GitHub-hosted runners include Docker, so the manual workflow [`.github/workflows/deploy-voice.yml`](.github/workflows/deploy-voice.yml) can deploy the full config from Actions. It does not run on push. Add repository secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` (Settings → Secrets and variables → Actions), then start **Deploy with voice** from the Actions tab. The workflow runs `npx wrangler deploy --config ../wrangler.jsonc`. The token needs permission to deploy Workers and Container images. Wrangler reads those two variables itself. On that config the `VOICE_HOST` binding is present, so the Worker uses the Container and ignores `VOICE_HOST_URL`.
 
 ### Remote MCP
 

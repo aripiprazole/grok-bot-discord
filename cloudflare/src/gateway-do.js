@@ -1,7 +1,8 @@
 // One Durable Object holds the Discord gateway, the inbox, and the voice-call control sockets.
 import { DurableObject } from "cloudflare:workers";
-import { createCloudBot, withoutVoiceHost } from "../../server/cloud/bot.mjs";
+import { createCloudBot } from "../../server/cloud/bot.mjs";
 import { FATAL_CLOSE_CODES, GATEWAY_URL, GatewaySession } from "../../server/cloud/gateway-session.mjs";
+import { annotateVoiceStatus, flyControlUrl, voiceHosting } from "../../server/cloud/voice-host.mjs";
 import { createClient } from "../../server/discord.mjs";
 import { loadLiveConfig } from "../../server/live/config.mjs";
 import { Inbox } from "../../server/live/inbox.mjs";
@@ -84,6 +85,8 @@ export class DiscordGateway extends DurableObject {
         error: (message) => this.log("error", String(message)),
       },
       onEffects: (effects) => this.applyEffects(effects),
+      // The Fly machine holds ELEVENLABS_API_KEY. The Container path still injects it from this Worker.
+      requireElevenKey: voiceHosting(this.env) !== "fly",
     });
     this.bot.restore(stored.bot ?? {});
     this.session = new GatewaySession({
@@ -181,15 +184,14 @@ export class DiscordGateway extends DurableObject {
 
   async alarm() {
     await this.ensureConnected();
-    for (const guildId of this.sockets.keys()) this.pingHealth(guildId);
+    for (const guildId of this.sockets.keys()) this.keepVoice(guildId);
   }
 
   async handle(method, params) {
     const gateway = await this.ensureConnected();
     let result = await this.bot.handle(method, params ?? {});
     if (method === "status" && result && typeof result === "object") {
-      // Without the VoiceHost binding the key can still be set. Keep that distinct from a missing key.
-      if (!this.env.VOICE_HOST) result = withoutVoiceHost(result);
+      result = annotateVoiceStatus(result, this.env);
       result = gateway.disabled
         ? { ...result, status: "gateway disabled", gateway: "disabled", error: result.error ?? "GATEWAY_ENABLED=false, so REST tools work but there are no live events or inbox" }
         : { ...result, gateway: gateway.ok ? "enabled" : "error", gatewayError: gateway.ok ? null : gateway.error };
@@ -215,28 +217,56 @@ export class DiscordGateway extends DurableObject {
   }
 
   async openVoice(spec) {
-    if (!this.env.VOICE_HOST) throw new Error("Voice hosting isn't configured.");
+    const hosting = voiceHosting(this.env);
+    if (hosting === "container") await this.openContainerVoice(spec);
+    else if (hosting === "fly") await this.openFlyVoice(spec);
+    else throw new Error("Voice hosting isn't configured.");
+  }
+
+  async openContainerVoice(spec) {
     const stub = this.env.VOICE_HOST.getByName(spec.guildId);
     const res = await stub.fetch("https://voice/control", { headers: { Upgrade: "websocket" } });
     const ws = res.webSocket;
     if (!ws) throw new Error("Voice container did not accept a control socket.");
     ws.accept();
-    this.sockets.set(spec.guildId, ws);
+    this.bindVoiceSocket(spec.guildId, ws, spec);
+  }
+
+  async openFlyVoice(spec) {
+    const response = await fetch(flyControlUrl(this.env), {
+      headers: {
+        Upgrade: "websocket",
+        Authorization: `Bearer ${this.env.VOICE_HOST_SECRET}`,
+      },
+    });
+    const ws = response.webSocket;
+    if (!ws) {
+      throw new Error(`Fly voice host refused the control socket (${response.status}).`);
+    }
+    ws.accept();
+    this.bindVoiceSocket(spec.guildId, ws, spec);
+  }
+
+  bindVoiceSocket(guildId, ws, spec) {
+    this.sockets.set(guildId, ws);
     ws.addEventListener("message", (ev) => {
-      this.ctx.waitUntil(this.onVoiceMessage(spec.guildId, ev.data));
+      this.ctx.waitUntil(this.onVoiceMessage(guildId, ev.data));
     });
     ws.addEventListener("close", () => {
-      if (this.sockets.get(spec.guildId) === ws) this.sockets.delete(spec.guildId);
+      if (this.sockets.get(guildId) === ws) {
+        this.sockets.delete(guildId);
+        this.stopHealth(guildId);
+      }
     });
-    // The API key rides this private socket only. Do not log `start`.
+    // The API key rides this socket only. Do not log `start`.
     ws.send(JSON.stringify({
       type: "start",
       ...spec,
-      elevenApiKey: this.env.ELEVENLABS_API_KEY,
+      elevenApiKey: this.env.ELEVENLABS_API_KEY || null,
       agentId: this.env.ELEVENLABS_AGENT_ID || null,
       voiceId: this.env.ELEVENLABS_VOICE_ID || null,
     }));
-    this.pingHealth(spec.guildId);
+    this.keepVoice(guildId);
   }
 
   async onVoiceMessage(guildId, raw) {
@@ -273,11 +303,14 @@ export class DiscordGateway extends DurableObject {
     }
   }
 
-  pingHealth(guildId) {
+  keepVoice(guildId) {
     if (this.health.has(guildId)) return;
-    const timer = setInterval(() => {
-      this.env.VOICE_HOST.getByName(guildId).fetch("https://voice/health").catch(() => {});
-    }, 20_000);
+    // The container sleeps without traffic. Fly stays up; the ping only keeps the proxy from idling the socket.
+    const timer = this.env.VOICE_HOST
+      ? setInterval(() => {
+          this.env.VOICE_HOST.getByName(guildId).fetch("https://voice/health").catch(() => {});
+        }, 20_000)
+      : setInterval(() => this.voiceSend(guildId, { type: "ping" }), 20_000);
     this.health.set(guildId, timer);
   }
 

@@ -11,6 +11,8 @@ import { Waker, checkWebhook } from "../live/waker.mjs";
 import { voiceInstructions } from "../live/voice/prompt.mjs";
 import { INVITE_PERMISSIONS, VOICE_COMMANDS } from "./commands.mjs";
 
+export { withoutVoiceHost } from "./voice-host.mjs";
+
 const MAX_PERSONA = 4_000;
 const TEXT = 0;
 const DM = 1;
@@ -24,12 +26,6 @@ const EPHEMERAL = 64;
 
 const snowflakeAsc = (a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : 1);
 
-// A no-container deploy can still have ELEVENLABS_API_KEY. discord_status must not call that a missing key.
-export function withoutVoiceHost(status) {
-  if (!status || typeof status !== "object" || !status.voiceEnabled) return status;
-  return { ...status, voiceEnabled: false, voiceUnavailable: "the voice container isn't deployed" };
-}
-
 export function createCloudBot({
   config,
   client = null,
@@ -39,6 +35,7 @@ export function createCloudBot({
   fetchImpl = globalThis.fetch,
   grok = null,
   onEffects = null,
+  requireElevenKey = true,
 } = {}) {
   const rest =
     client ??
@@ -318,7 +315,8 @@ export function createCloudBot({
   }
 
   function beginCall({ guildId, channelId, listen, hostId, personaText }) {
-    if (!config.elevenApiKey) throw new Error("Voice calls need an ElevenLabs API key: set ELEVENLABS_API_KEY.");
+    // Fly.io keeps ELEVENLABS_API_KEY on the voice machine. The Container path still needs it here.
+    if (requireElevenKey && !config.elevenApiKey) throw new Error("Voice calls need an ElevenLabs API key: set ELEVENLABS_API_KEY.");
     const channel = channels.get(channelId);
     if (!channel || channel.type !== VOICE) throw new Error("That isn't a voice channel the bot can see.");
     const gate = { id: channel.id, guild: { id: guildId }, parentId: channel.parentId };

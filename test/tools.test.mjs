@@ -188,8 +188,14 @@ test("discord_status distinguishes a missing voice container from a missing Elev
   const missingContainer = await callTool(
     "discord_status",
     {},
-    createToolContext({ token: "Bot abc" }, fakeDiscord(routes).fetchImpl, live({ voiceEnabled: false, voiceUnavailable: "the voice container isn't deployed" })),
+    createToolContext({ token: "Bot abc" }, fakeDiscord(routes).fetchImpl, live({ voiceEnabled: false, voiceUnavailable: "the voice host isn't deployed" })),
   );
-  assert.match(missingContainer.content[0].text, /Voice calls: off \(the voice container isn't deployed\)/);
+  assert.match(missingContainer.content[0].text, /Voice calls: off \(the voice host isn't deployed\)/);
   assert.doesNotMatch(missingContainer.content[0].text, /ELEVENLABS_API_KEY/);
+  const fly = await callTool(
+    "discord_status",
+    {},
+    createToolContext({ token: "Bot abc" }, fakeDiscord(routes).fetchImpl, live({ voiceEnabled: true, voiceHost: "fly" })),
+  );
+  assert.match(fly.content[0].text, /Voice calls: on \(Fly\.io\)/);
 });

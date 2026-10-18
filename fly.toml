@@ -1,0 +1,36 @@
+# Voice host for grok-bot-discord. Discord voice is outbound UDP, which this Machine
+# sends directly (it does not go through the HTTP proxy, and no public UDP port is published).
+# One always-on shared-cpu-1x in São Paulo. 512mb is the smallest size that fits Node, Opus, and DAVE.
+# Deploy with: fly deploy --ha=false
+app = "grok-bot-discord-voice"
+primary_region = "gru"
+
+[build]
+  dockerfile = "voice.Dockerfile"
+
+[env]
+  PORT = "8080"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.http_options]
+    # A call can be quiet between turns. Keep the control WebSocket open for an hour.
+    idle_timeout = 3600
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "20s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1

@@ -1,0 +1,23 @@
+# Manual deploy of the Fly.io voice host. The Worker stays on Cloudflare.
+# Create the app and set Fly secrets once (see the README), then add the repository
+# secret FLY_API_TOKEN and run this from the Actions tab. It does not run on push.
+name: Deploy voice on Fly
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: fly deploy (voice)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy the voice host
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl deploy --remote-only --ha=false
