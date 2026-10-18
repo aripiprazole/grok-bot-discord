@@ -138,6 +138,16 @@ Turn on Message Content Intent for the Discord application. The cron starts the 
 
 On the hosted bot, `send_message` and `reply_on_discord` accept embeds, buttons, select menus, and polls. Presses and selections are acknowledged and queued in the inbox. `MESSAGE_UPDATE` and `MESSAGE_DELETE` update that inbox, and context reads mark messages edited or deleted. That gateway behavior is part of the Worker, not the local Node process.
 
+### Free plan (no voice) and the gateway switch
+
+On the Workers Free plan, deploy with `wrangler.novoice.jsonc`: the same Worker and SQLite-backed Durable Object, without the voice container. Voice tools then answer "Voice hosting isn't configured."
+
+```sh
+npx wrangler deploy --config ../wrangler.novoice.jsonc
+```
+
+`GATEWAY_ENABLED` (a var, default `true`) controls the Discord gateway connection. With `"false"` (the default in `wrangler.novoice.jsonc`), neither the cron nor MCP calls open the gateway, and REST tools still work. Use that while another process runs the same bot token. Set it to `"true"` and redeploy to cut over. To add voice later, upgrade to Workers Paid and deploy with `wrangler.jsonc` from a machine with Docker. Wrangler builds `voice.Dockerfile` and pushes it to Cloudflare's registry.
+
 ### Remote MCP
 
 ```text
