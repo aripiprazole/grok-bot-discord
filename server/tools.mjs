@@ -317,7 +317,10 @@ export const TOOLS = [
       } else if (s.replyMode) {
         lines.push("Replies: instant (Grok answers right away).");
       }
-      if (s.replyMode) lines.push(`Persona for voice: ${s.persona ? "set" : "not set (set_discord_persona)"} · Voice calls: ${s.voiceEnabled ? "on" : "off (needs ELEVENLABS_API_KEY)"}`);
+      if (s.replyMode) {
+        const voiceCalls = s.voiceEnabled ? "on" : `off (${s.voiceUnavailable || "needs ELEVENLABS_API_KEY"})`;
+        lines.push(`Persona for voice: ${s.persona ? "set" : "not set (set_discord_persona)"} · Voice calls: ${voiceCalls}`);
+      }
       if (s.invite) lines.push(`Invite link: ${s.invite}`);
       if (s.voice?.length) lines.push(...s.voice.map((v) => `In voice: 🔊 ${v.channel} (${v.server}), listening to ${v.listen}`));
       lines.push(`Log: ${ctx.live.logPath}`);

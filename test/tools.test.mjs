@@ -168,3 +168,28 @@ test("create_thread in a forum sends the first post with the thread", async () =
   const post = calls.find((c) => c.key === `POST /channels/${CHANNEL}/threads`);
   assert.deepEqual(post.body, { name: "Plan", message: { content: "Kickoff", allowed_mentions: { parse: ["users"] } } });
 });
+
+test("discord_status distinguishes a missing voice container from a missing ElevenLabs key", async () => {
+  const routes = { "GET /users/@me": { id: "555555555555555555", username: "helper" } };
+  const status = {
+    status: "online",
+    startedAt: "t",
+    servers: [],
+    replyMode: "agent",
+    inbox: { pending: 0 },
+    persona: false,
+    wake: { connected: false },
+    voice: [],
+  };
+  const live = (extra) => ({ logPath: "test", call: async () => ({ ...status, ...extra }) });
+  const missingKey = await callTool("discord_status", {}, createToolContext({ token: "Bot abc" }, fakeDiscord(routes).fetchImpl, live({ voiceEnabled: false })));
+  assert.match(missingKey.content[0].text, /needs ELEVENLABS_API_KEY/);
+  assert.doesNotMatch(missingKey.content[0].text, /voice container/);
+  const missingContainer = await callTool(
+    "discord_status",
+    {},
+    createToolContext({ token: "Bot abc" }, fakeDiscord(routes).fetchImpl, live({ voiceEnabled: false, voiceUnavailable: "the voice container isn't deployed" })),
+  );
+  assert.match(missingContainer.content[0].text, /Voice calls: off \(the voice container isn't deployed\)/);
+  assert.doesNotMatch(missingContainer.content[0].text, /ELEVENLABS_API_KEY/);
+});

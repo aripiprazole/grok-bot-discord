@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createCloudBot } from "../server/cloud/bot.mjs";
+import { createCloudBot, withoutVoiceHost } from "../server/cloud/bot.mjs";
 import { loadLiveConfig } from "../server/live/config.mjs";
 import { buildEmbeds, buildPoll, richFields } from "../server/cloud/rich.mjs";
 
@@ -177,4 +177,15 @@ test("rich send payload builds an embed, buttons, a select menu, and a poll", ()
   assert.equal(fields.components[1].components[0].type, 3);
   assert.equal(buildPoll({ question: "Q", answers: ["A"] }).duration, 24);
   assert.equal(buildEmbeds([{ title: "T" }])[0].title, "T");
+});
+
+test("a missing voice container is not reported as a missing ElevenLabs key", () => {
+  const withKey = { voiceEnabled: true, persona: true };
+  assert.deepEqual(withoutVoiceHost(withKey), {
+    voiceEnabled: false,
+    persona: true,
+    voiceUnavailable: "the voice container isn't deployed",
+  });
+  const missingKey = { voiceEnabled: false };
+  assert.equal(withoutVoiceHost(missingKey), missingKey);
 });

@@ -24,6 +24,12 @@ const EPHEMERAL = 64;
 
 const snowflakeAsc = (a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : 1);
 
+// A no-container deploy can still have ELEVENLABS_API_KEY. discord_status must not call that a missing key.
+export function withoutVoiceHost(status) {
+  if (!status || typeof status !== "object" || !status.voiceEnabled) return status;
+  return { ...status, voiceEnabled: false, voiceUnavailable: "the voice container isn't deployed" };
+}
+
 export function createCloudBot({
   config,
   client = null,
