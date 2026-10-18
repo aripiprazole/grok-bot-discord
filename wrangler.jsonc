@@ -1,0 +1,40 @@
+{
+  "$schema": "./cloudflare/node_modules/wrangler/config-schema.json",
+  "name": "grok-bot-discord",
+  "main": "cloudflare/src/index.js",
+  "compatibility_date": "2026-10-18",
+  "compatibility_flags": ["nodejs_compat"],
+  "upload_source_maps": true,
+  "observability": {
+    "enabled": true,
+    "traces": { "enabled": true }
+  },
+  "triggers": {
+    "crons": ["* * * * *"]
+  },
+  "vars": {
+    "REPLY_MODE": "agent"
+  },
+  "containers": [
+    {
+      "class_name": "VoiceHost",
+      "scheduling_policy": "durable_object",
+      "images": {
+        "voice": {
+          "dockerfile": "./voice.Dockerfile",
+          "build_context": "."
+        }
+      }
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "DISCORD_GATEWAY", "class_name": "DiscordGateway" },
+      { "name": "VOICE_HOST", "class_name": "VoiceHost" }
+    ]
+  },
+  "exports": {
+    "DiscordGateway": { "type": "durable-object", "storage": "sqlite" },
+    "VoiceHost": { "type": "durable-object", "storage": "sqlite" }
+  }
+}

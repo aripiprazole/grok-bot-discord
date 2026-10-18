@@ -9,7 +9,7 @@ The `discord` MCP server provides:
 
 - **Status:** `discord_status` shows whether the bot is online, which servers it's in, active calls, an invite link, and setup problems.
 - **Text:** `list_servers`, `list_channels`, `read_messages`, `send_message`, `edit_message`, `add_reaction`, `create_thread`.
-- **Voice:** `join_voice_channel`, `leave_voice_channel`.
+- **Voice:** `join_voice_channel`, `leave_voice_channel`, `say_in_voice_call`.
 - **Inbox:** `check_discord_inbox`, `reply_on_discord`, `skip_discord_message`. When people @mention you, DM you or write in your threads, their messages wait here (marked 👀) for you to answer as yourself. The `discord-inbox` skill handles this, and `discord-setup` creates the routine that runs it.
 - **Persona:** `set_discord_persona` saves who you are for voice calls.
 
@@ -18,7 +18,7 @@ The bot stays online by itself, and people can run `/join` and `/leave` in Disco
 ## Setup questions
 
 - "Is it working?" or "How do I add it to my server?": call `discord_status`. It prints the invite link and any problem, such as a missing setting, a bad token, or Message Content Intent being off.
-- Settings live in the plugin's configuration: `DISCORD_BOT_TOKEN` (required), `XAI_API_KEY` (voice calls and instant replies), `REPLY_MODE`, `ALLOWED_IDS`, `LISTEN_CHANNEL_IDS`, `DISCORD_DEFAULT_CHANNEL_ID`.
+- Settings live in the plugin's configuration: `DISCORD_BOT_TOKEN` (required), `ELEVENLABS_API_KEY` (voice calls), `XAI_API_KEY` (instant replies only), `REPLY_MODE`, `ALLOWED_IDS`, `LISTEN_CHANNEL_IDS`, `DISCORD_DEFAULT_CHANNEL_ID`.
 
 ## Find the right place
 
@@ -28,9 +28,11 @@ The bot stays online by itself, and people can run `/join` and `/leave` in Disco
 
 ## Voice calls
 
-- `join_voice_channel` needs a voice channel; `list_channels` marks them `(voice)`. The bot then talks with people in the call using Grok realtime voice.
+- `join_voice_channel` needs a voice channel; `list_channels` marks them `(voice)`. The bot then talks with people in the call using ElevenLabs.
 - Pass `listen_to_user_id` to have it respond to one person only. This is useful in busy calls.
 - It leaves by itself when the call empties. Use `leave_voice_channel` to end the call sooner.
+- If a voice request arrives (someone on the call asked the voice agent to check something), do the work and speak the answer with `say_in_voice_call`.
+- `send_message` and `reply_on_discord` can include `embeds`, `components` (buttons or a select menu), and `poll`. On the hosted bot, button presses and menu selections show up in `check_discord_inbox`.
 
 ## Before posting
 

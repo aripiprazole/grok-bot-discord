@@ -25,14 +25,17 @@ export function writeJson(file, value) {
 }
 
 export class Inbox {
-  constructor({ file = null, now = Date.now } = {}) {
+  constructor({ file = null, now = Date.now, items = null, persist = null } = {}) {
     this.file = file;
     this.now = now;
-    this.items = file ? (readJson(file, {}).items ?? []) : [];
+    this.persist = persist;
+    if (Array.isArray(items)) this.items = items;
+    else this.items = file ? (readJson(file, {}).items ?? []) : [];
   }
 
   save() {
-    if (this.file) writeJson(this.file, { items: this.items });
+    if (this.persist) this.persist(this.items);
+    else if (this.file) writeJson(this.file, { items: this.items });
   }
 
   isClaimed(item) {

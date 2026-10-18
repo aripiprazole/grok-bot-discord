@@ -53,6 +53,8 @@ async function handle(method, params) {
       return ready().join(params);
     case "leave":
       return ready().leave(params);
+    case "voice.say":
+      return ready().say(params);
     case "inbox.check":
       return ready().inbox.check(params);
     case "inbox.reply":

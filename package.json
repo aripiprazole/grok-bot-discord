@@ -1,8 +1,8 @@
 {
   "name": "discord-bot-cursor-plugin",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
-  "description": "Cursor / Grok Bot plugin: Discord tools, an always-on Discord presence that answers with Grok, and voice calls.",
+  "description": "Cursor / Grok Bot plugin: Discord tools, an always-on Discord presence, and ElevenLabs voice calls.",
   "type": "module",
   "license": "MIT",
   "bin": {

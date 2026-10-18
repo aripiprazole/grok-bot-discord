@@ -1,83 +1,39 @@
-// Voice calls: /join brings Grok into your voice channel over Grok realtime voice; /leave ends it.
+// Voice calls: /join brings the bot into a voice channel and talks through ElevenLabs Agents.
 
-import { PassThrough } from "node:stream";
-import {
-  EndBehaviorType,
-  NoSubscriberBehavior,
-  StreamType,
-  VoiceConnectionStatus,
-  createAudioPlayer,
-  createAudioResource,
-  entersState,
-  joinVoiceChannel,
-} from "@discordjs/voice";
 import { ChannelType, InteractionContextType, MessageFlags, SlashCommandBuilder } from "discord.js";
-import prism from "prism-media";
-import { chunkMessage } from "../../format.mjs";
+import { VoiceConnectionStatus, entersState, joinVoiceChannel } from "@discordjs/voice";
 import { channelAllowed, isAllowed } from "../config.mjs";
-import { FRAME_MS, createUpmixer } from "./audio.mjs";
-import { VoiceBridge, sessionConfig } from "./bridge.mjs";
-import { connectRealtime } from "./realtime.mjs";
+import { chunkMessage } from "../../format.mjs";
+import { bindElevenToConnection } from "./eleven-call.mjs";
+import { fireVoiceRequest, voiceInstructions } from "./prompt.mjs";
 
 const CONNECT_TIMEOUT_MS = 20_000;
-const SPEAKER_SILENCE_MS = 1_000;
-// Buffer this much of each reply before playing so network jitter doesn't cause gaps (48 kHz stereo s16le).
-const PREBUFFER_BYTES = 48_000 * 2 * 2 * 0.2;
-// The player normally gives up after 100 ms without audio; tolerate pauses in Grok's stream instead.
-const MAX_MISSED_FRAMES = 250;
 const EPHEMERAL = { flags: MessageFlags.Ephemeral };
 
 export const VOICE_COMMANDS = [
   new SlashCommandBuilder()
     .setName("join")
-    .setDescription("Bring Grok into your voice channel")
+    .setDescription("Bring the bot into your voice channel")
     .setContexts(InteractionContextType.Guild)
     .addStringOption((o) =>
       o
         .setName("listen")
-        .setDescription("Who Grok listens to")
+        .setDescription("Who the bot listens to")
         .addChoices({ name: "Everyone in the call", value: "everyone" }, { name: "Only me", value: "me" }),
     ),
-  new SlashCommandBuilder().setName("leave").setDescription("Make Grok leave the voice channel").setContexts(InteractionContextType.Guild),
+  new SlashCommandBuilder().setName("leave").setDescription("Make the bot leave the voice channel").setContexts(InteractionContextType.Guild),
 ].map((command) => command.toJSON());
 
-function voiceInstructions({ botName, listen, persona, extra }) {
-  return [
-    persona ? `You are ${botName}. ${persona}` : `You are ${botName}, powered by Grok.`,
-    `You're talking in a Discord voice call${listen === "everyone" ? " that may include several people" : ""}.`,
-    "Speak naturally and keep replies short (one to three sentences) unless someone asks for detail.",
-    "You only hear the call; you can't see the screen or the text chat. Stay in character.",
-    extra,
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
-
 class VoiceSession {
-  constructor({ channel, hostId, listen, persona, config, botName, log, onEnd }) {
-    Object.assign(this, { channel, hostId, listen, persona, config, botName, log, onEnd });
-    this.streams = new Map();
-    this.upmix = createUpmixer();
-    this.out = null;
-    this.prebuffer = [];
-    this.prebufferBytes = 0;
+  constructor({ channel, hostId, listen, persona, config, botName, log, onEnd, onAgentRequest }) {
+    Object.assign(this, { channel, hostId, listen, persona, config, botName, log, onEnd, onAgentRequest });
     this.stopped = false;
-    this.live = false;
+    this.binder = null;
+    this.connection = null;
   }
 
   async start() {
-    const { channel, config } = this;
-    this.bridge = new VoiceBridge({
-      send: (event) => this.realtime?.send(event),
-      onAudio: (pcm) => this.play(pcm),
-      onInterrupt: () => this.interrupt(),
-      onResponseDone: () => this.endReply(),
-      onTranscript: (text) => config.voice.transcripts && this.post(`🔊 **${this.botName}:** ${text}`),
-      onError: (err) => this.log.warn(`Grok voice: ${err.message}`),
-    });
-    this.player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play, maxMissedFrames: MAX_MISSED_FRAMES } });
-    this.player.on("error", (err) => this.log.warn(`Voice playback: ${err.message}`));
-
+    const { channel } = this;
     this.connection = joinVoiceChannel({
       channelId: channel.id,
       guildId: channel.guild.id,
@@ -86,27 +42,35 @@ class VoiceSession {
       selfMute: false,
     });
     await entersState(this.connection, VoiceConnectionStatus.Ready, CONNECT_TIMEOUT_MS);
-    this.connection.subscribe(this.player);
-
-    this.realtime = connectRealtime({
-      apiKey: config.xaiApiKey,
-      model: config.voice.model,
-      session: sessionConfig({
-        voice: config.voice.voice,
-        instructions: voiceInstructions({ botName: this.botName, listen: this.listen, persona: this.persona, extra: config.systemPrompt }),
-        tools: config.tools,
+    this.binder = bindElevenToConnection(this.connection, {
+      apiKey: this.config.elevenApiKey,
+      agentId: this.config.voice.agentId,
+      voiceId: this.config.voice.voiceId,
+      instructions: voiceInstructions({
+        botName: this.botName,
+        listen: this.listen,
+        persona: this.persona,
+        extra: this.config.systemPrompt,
       }),
-      onEvent: (event) => this.bridge.handleEvent(event),
-      // Before the session is live, start() reports the failure instead.
-      onClose: (code, reason) => this.live && this.stop(code === 1000 ? null : `Grok voice disconnected (${code}${reason ? `: ${reason}` : ""}).`),
+      canHear: (userId) => this.canHear(userId),
+      onTranscript: (text) => this.config.voice.transcripts && this.post(`🔊 **${this.botName}:** ${text}`),
+      onError: (err) => this.log.warn(`ElevenLabs voice: ${err.message}`),
+      onAgentRequest: (payload) => this.onAgentRequest?.(payload),
+      onClose: (code, reason) => this.stop(code === 1000 ? null : `ElevenLabs disconnected (${code}${reason ? `: ${reason}` : ""}).`),
+      onLimit: (reason) => this.stop(reason),
+      callInfo: {
+        guildId: channel.guild.id,
+        channelId: channel.id,
+        place: `🔊 ${channel.name} (${channel.guild.name})`,
+        listen: this.listen,
+        hostId: this.hostId,
+      },
+      maxMinutes: this.config.voice.maxMinutes,
+      log: this.log,
     });
-    await this.realtime.ready;
-    this.live = true;
-
-    this.connection.receiver.speaking.on("start", (userId) => this.hear(userId));
+    await this.binder.ready;
     this.connection.on(VoiceConnectionStatus.Disconnected, async () => {
       try {
-        // Being moved between channels looks like a brief disconnect; only give up if it doesn't recover.
         await Promise.race([
           entersState(this.connection, VoiceConnectionStatus.Signalling, 5_000),
           entersState(this.connection, VoiceConnectionStatus.Connecting, 5_000),
@@ -115,8 +79,6 @@ class VoiceSession {
         this.stop("Disconnected from the voice channel.");
       }
     });
-    this.ticker = setInterval(() => this.bridge.tick(), FRAME_MS);
-    this.limit = setTimeout(() => this.stop(`Hit the ${config.voice.maxMinutes}-minute voice limit. Run /join to start again.`), config.voice.maxMinutes * 60_000);
   }
 
   canHear(userId) {
@@ -124,54 +86,9 @@ class VoiceSession {
     return this.listen === "everyone" || userId === this.hostId;
   }
 
-  hear(userId) {
-    if (this.stopped || this.streams.has(userId) || !this.canHear(userId)) return;
-    const opus = this.connection.receiver.subscribe(userId, {
-      end: { behavior: EndBehaviorType.AfterSilence, duration: SPEAKER_SILENCE_MS },
-    });
-    const decoder = new prism.opus.Decoder({ rate: 48_000, channels: 2, frameSize: 960 });
-    this.streams.set(userId, opus);
-    const cleanup = () => {
-      if (this.streams.get(userId) === opus) this.streams.delete(userId);
-      decoder.destroy();
-    };
-    opus.once("end", cleanup).once("close", cleanup);
-    opus.on("error", (err) => this.log.warn(`Voice receive (${userId}): ${err.message}`));
-    decoder.on("error", (err) => this.log.warn(`Opus decode (${userId}): ${err.message}`));
-    opus.pipe(decoder).on("data", (pcm) => this.bridge.pushUserAudio(userId, pcm));
-  }
-
-  play(pcm) {
-    const stereo = this.upmix(pcm);
-    if (this.out) {
-      this.out.write(stereo);
-      return;
-    }
-    this.prebuffer.push(stereo);
-    this.prebufferBytes += stereo.length;
-    if (this.prebufferBytes >= PREBUFFER_BYTES) this.startReply();
-  }
-
-  startReply() {
-    this.out = new PassThrough();
-    for (const chunk of this.prebuffer) this.out.write(chunk);
-    this.prebuffer = [];
-    this.prebufferBytes = 0;
-    this.player.play(createAudioResource(this.out, { inputType: StreamType.Raw }));
-  }
-
-  endReply() {
-    if (!this.out && this.prebufferBytes) this.startReply(); // short reply that never filled the prebuffer
-    this.out?.end();
-    this.out = null;
-  }
-
-  interrupt() {
-    this.prebuffer = [];
-    this.prebufferBytes = 0;
-    this.out?.destroy();
-    this.out = null;
-    this.player.stop(true);
+  say(content) {
+    if (!this.binder) throw new Error("The voice call isn't connected yet.");
+    this.binder.say(content);
   }
 
   post(text) {
@@ -182,25 +99,18 @@ class VoiceSession {
   stop(reason) {
     if (this.stopped) return;
     this.stopped = true;
-    clearInterval(this.ticker);
-    clearTimeout(this.limit);
-    this.realtime?.close();
-    for (const stream of this.streams.values()) stream.destroy();
-    this.streams.clear();
-    this.out?.destroy();
-    this.player?.stop(true);
+    this.binder?.stop();
     if (this.connection && this.connection.state.status !== VoiceConnectionStatus.Destroyed) this.connection.destroy();
     if (reason) this.post(`👋 ${reason}`);
     this.onEnd();
   }
 }
 
-export function createVoiceManager({ client, config, getPersona = () => null, log = console }) {
-  const sessions = new Map(); // guild id → VoiceSession
+export function createVoiceManager({ client, config, getPersona = () => null, getWebhook = () => null, log = console }) {
+  const sessions = new Map();
 
-  // Joins `channel`, listening to everyone or only `hostId`. Throws with a readable message on failure.
   async function joinChannel({ channel, hostId = null, listen = hostId ? "me" : "everyone", persona = getPersona() }) {
-    if (!config.xaiApiKey) throw new Error("Voice calls need an xAI API key: set XAI_API_KEY in the plugin settings.");
+    if (!config.elevenApiKey) throw new Error("Voice calls need an ElevenLabs API key: set ELEVENLABS_API_KEY.");
     if (channel.type !== ChannelType.GuildVoice) throw new Error("I can only join regular voice channels.");
     if (!channelAllowed(channel, config)) throw new Error(`#${channel.name} isn't in this bot's allowed channels (ALLOWED_CHANNEL_IDS).`);
     if (!channel.joinable || !channel.speakable) throw new Error(`I need the Connect and Speak permissions in #${channel.name}.`);
@@ -214,6 +124,9 @@ export function createVoiceManager({ client, config, getPersona = () => null, lo
       botName: client.user.username,
       log,
       onEnd: () => sessions.get(channel.guild.id) === session && sessions.delete(channel.guild.id),
+      onAgentRequest: ({ request, call }) => {
+        fireVoiceRequest({ webhook: getWebhook?.() ?? config.routineWebhook, request, call, log }).catch(() => {});
+      },
     });
     sessions.set(channel.guild.id, session);
     try {
@@ -230,6 +143,15 @@ export function createVoiceManager({ client, config, getPersona = () => null, lo
     if (!session) return false;
     session.stop(null);
     return true;
+  }
+
+  function say({ serverId, content }) {
+    const text = content?.trim();
+    if (!text) throw new Error("content must be a non-empty string.");
+    const targets = serverId ? [sessions.get(serverId)].filter(Boolean) : [...sessions.values()];
+    if (!targets.length) throw new Error(serverId ? "The bot isn't in a voice channel on that server." : "The bot isn't in a voice channel.");
+    for (const session of targets) session.say(text);
+    return `Speaking in ${targets.map((s) => `🔊 ${s.channel.name}`).join(", ")}.`;
   }
 
   async function slashJoin(interaction) {
@@ -250,7 +172,7 @@ export function createVoiceManager({ client, config, getPersona = () => null, lo
   return {
     joinChannel,
     leaveGuild,
-
+    say,
     sessions: () => [...sessions.values()].map((s) => ({ server: s.channel.guild.name, channel: s.channel.name, listen: s.listen })),
 
     async handleInteraction(interaction) {
@@ -264,7 +186,6 @@ export function createVoiceManager({ client, config, getPersona = () => null, lo
       return interaction.reply("👋 Left the voice channel.");
     },
 
-    // Leave when the call empties, or when the only person being listened to leaves.
     onVoiceStateUpdate(oldState) {
       const session = sessions.get(oldState.guild.id);
       if (!session) return;

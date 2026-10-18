@@ -54,7 +54,7 @@ export async function startGateway({ config, dataDir, log }) {
   rewake.unref();
   const grok = config.xaiApiKey ? createGrok({ apiKey: config.xaiApiKey, model: config.model, tools: config.tools }) : null;
   const onMessage = createChatHandler({ client, config, grok, agentInbox: replyMode === "agent" ? agentInbox : null, followedThreads, getPersona, log });
-  const voice = createVoiceManager({ client, config, getPersona, log });
+  const voice = createVoiceManager({ client, config, getPersona, getWebhook, log });
 
   client.on(Events.MessageCreate, (message) => onMessage(message).catch((err) => log.error(err)));
   client.on(Events.InteractionCreate, (interaction) => voice.handleInteraction(interaction).catch((err) => log.error(err)));
@@ -84,7 +84,7 @@ export async function startGateway({ config, dataDir, log }) {
       inbox: agentInbox.stats(),
       persona: Boolean(getPersona()),
       wake: waker.status(),
-      voiceEnabled: Boolean(config.xaiApiKey),
+      voiceEnabled: Boolean(config.elevenApiKey),
       voice: voice.sessions(),
     }),
 
@@ -119,6 +119,10 @@ export async function startGateway({ config, dataDir, log }) {
       const guildIds = serverId ? [serverId] : [...client.guilds.cache.keys()];
       const left = guildIds.filter((id) => voice.leaveGuild(id));
       return left.length ? "Left the voice channel." : "The bot isn't in a voice channel.";
+    },
+
+    say({ serverId, content }) {
+      return voice.say({ serverId, content });
     },
 
     async stop(reason) {

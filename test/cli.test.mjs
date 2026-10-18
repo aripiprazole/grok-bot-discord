@@ -14,7 +14,7 @@ test("help lists every tool with its arguments", () => {
   const run = cli(["help"]);
   assert.equal(run.status, 0);
   assert.match(run.stdout, /Usage: grok-bot-discord <tool>/);
-  assert.match(run.stdout, /reply_on_discord \{item_id, content\}/);
+  assert.match(run.stdout, /reply_on_discord \{item_id, content\?/);
   assert.match(run.stdout, /check_discord_inbox \{limit\?\}/);
 });
 

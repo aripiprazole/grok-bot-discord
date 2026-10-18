@@ -108,8 +108,9 @@ export function createAgentInbox({ client, inbox, followedThreads = new Set(), o
       ].join("\n");
     },
 
-    async reply({ itemId, content }) {
-      if (!content?.trim()) throw new Error("content must be a non-empty string.");
+    async reply({ itemId, content, thread, embeds, components, poll }) {
+      const extras = embeds || components || poll ? { ...(embeds ? { embeds } : {}), ...(components ? { components } : {}), ...(poll ? { poll } : {}) } : null;
+      if (!content?.trim() && !extras) throw new Error("content must be a non-empty string.");
       const item = inbox.get(itemId);
       if (!item) throw new Error(`There's no waiting Discord item "${itemId}". It was already answered or expired.`);
       const channel = await client.channels.fetch(item.channelId);
@@ -117,12 +118,13 @@ export function createAgentInbox({ client, inbox, followedThreads = new Set(), o
       let replyTo = null;
       if (item.kind === "channel") {
         const mention = await channel.messages.fetch(item.messages[0].id).catch(() => null);
-        const thread = mention ? await startThread(mention, log) : null;
-        target = thread ?? channel;
-        if (!thread) replyTo = mention;
+        // `thread: false` replies inline. Anything else (including omitted) starts a thread when the channel allows it.
+        const started = thread !== false && mention ? await startThread(mention, log) : null;
+        target = started ?? channel;
+        if (!started) replyTo = mention;
       }
       if (target.isThread()) followedThreads.add(target.id);
-      const sent = await post(target, content, replyTo);
+      const sent = await post(target, content, replyTo, extras);
       stopTyping(item.id);
       inbox.take(item.id);
       await clearSeen(channel, item.messages);

@@ -1,38 +1,26 @@
-// Moves audio between a voice call and a Grok realtime session. Discord- and socket-free so it can be
-// tested: the caller supplies `send` (realtime client events) and the playback/transcript callbacks.
+// Moves audio between a Discord voice call and an ElevenLabs Agents session.
+// Discord- and socket-free so it can be tested: the caller supplies `send` and the playback callbacks.
 
-import { FRAME_MS, INPUT_FRAME_BYTES, INPUT_RATE, Mixer, OUTPUT_RATE, discordToGrok } from "./audio.mjs";
+import { FRAME_MS, INPUT_FRAME_BYTES, Mixer, discordToEleven } from "./audio.mjs";
 
-// Keep sending silence briefly after people stop talking so server VAD can detect the end of a turn.
+// Keep sending silence briefly after people stop talking so ElevenLabs can close the turn.
 const TRAILING_SILENCE_MS = 1_200;
 const SEND_EVERY_FRAMES = 5; // batch 100 ms of audio per message
 
-export function sessionConfig({ voice, instructions, tools = [] }) {
-  return {
-    voice,
-    instructions,
-    turn_detection: { type: "server_vad" },
-    audio: {
-      input: { format: { type: "audio/pcm", rate: INPUT_RATE } },
-      output: { format: { type: "audio/pcm", rate: OUTPUT_RATE } },
-    },
-    ...(tools.length ? { tools: tools.map((type) => ({ type })) } : {}),
-  };
-}
-
 export class VoiceBridge {
-  constructor({ send, onAudio, onInterrupt, onResponseDone, onTranscript, onError, now = () => performance.now() }) {
-    Object.assign(this, { send, onAudio, onInterrupt, onResponseDone, onTranscript, onError, now });
+  constructor({ send, onAudio, onInterrupt, onResponseDone, onTranscript, onError, onFunctionCall, now = () => performance.now() }) {
+    Object.assign(this, { send, onAudio, onInterrupt, onResponseDone, onTranscript, onError, onFunctionCall, now });
     this.mixer = new Mixer();
     this.pending = [];
     this.startedAt = null;
     this.framesDue = 0;
     this.lastVoiceAt = -Infinity;
+    this.seenCalls = new Set();
   }
 
   // Decoded Discord audio (48 kHz stereo) from one person.
   pushUserAudio(speakerId, pcm) {
-    this.mixer.push(speakerId, discordToGrok(pcm));
+    this.mixer.push(speakerId, discordToEleven(pcm));
   }
 
   removeSpeaker(speakerId) {
@@ -62,30 +50,53 @@ export class VoiceBridge {
     if (!this.pending.length) return;
     const audio = Buffer.concat(this.pending).toString("base64");
     this.pending = [];
-    this.send({ type: "input_audio_buffer.append", audio });
+    this.send({ user_audio_chunk: audio });
   }
 
   handleEvent(event) {
     switch (event.type) {
-      case "response.output_audio.delta":
-      case "response.audio.delta":
-        this.onAudio(Buffer.from(event.delta, "base64"));
+      case "audio": {
+        const b64 = event.audio_event?.audio_base_64;
+        if (b64) this.onAudio(Buffer.from(b64, "base64"));
+        if (event.audio_event?.is_final) this.onResponseDone();
         break;
-      case "input_audio_buffer.speech_started":
-        // Barge-in: someone started talking, so drop any reply audio still queued.
+      }
+      case "interruption":
         this.onInterrupt();
         break;
-      case "response.output_audio_transcript.done":
-      case "response.audio_transcript.done": {
-        const text = event.transcript ?? event.text;
+      case "agent_response": {
+        const text = event.agent_response_event?.agent_response;
         if (text?.trim()) this.onTranscript(text.trim());
         break;
       }
-      case "response.done":
+      case "agent_response_correction": {
+        const text = event.agent_response_correction_event?.corrected_agent_response;
+        if (text?.trim()) this.onTranscript(text.trim());
+        break;
+      }
+      case "agent_response_complete":
         this.onResponseDone();
         break;
+      case "ping":
+        // Answer immediately. A delayed pong is only for measuring RTT, and a dropped timer would hang up the call.
+        this.send({ type: "pong", event_id: event.ping_event?.event_id });
+        break;
+      case "client_tool_call": {
+        const call = event.client_tool_call;
+        if (!call?.tool_call_id || this.seenCalls.has(call.tool_call_id)) break;
+        this.seenCalls.add(call.tool_call_id);
+        this.onFunctionCall?.({
+          name: call.tool_name,
+          callId: call.tool_call_id,
+          arguments: call.parameters ?? {},
+        });
+        break;
+      }
       case "error":
-        this.onError(new Error(event.error?.message ?? JSON.stringify(event.error ?? event)));
+      case "client_error":
+        this.onError(new Error(event.error?.message ?? event.message ?? event.client_error_event?.message ?? "ElevenLabs error"));
+        break;
+      default:
         break;
     }
   }

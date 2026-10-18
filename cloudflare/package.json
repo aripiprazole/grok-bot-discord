@@ -1,0 +1,13 @@
+{
+  "name": "grok-bot-discord-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy --config ../wrangler.jsonc",
+    "dev": "wrangler dev --config ../wrangler.jsonc",
+    "check": "wrangler deploy --dry-run --config ../wrangler.jsonc"
+  },
+  "devDependencies": {
+    "wrangler": "^4.45.0"
+  }
+}
