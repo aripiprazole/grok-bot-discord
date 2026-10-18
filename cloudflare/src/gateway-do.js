@@ -89,6 +89,8 @@ export class DiscordGateway extends DurableObject {
       requireElevenKey: voiceHosting(this.env) !== "fly",
     });
     this.bot.restore(stored.bot ?? {});
+    // Items still waiting from before a restart or deploy get one wake-up, as if they had just arrived.
+    if (this.bot.inbox.waiting().count) this.bot.waker.notify();
     this.session = new GatewaySession({
       token: config.token,
       onSend: (payload) => this.sendGateway(payload),

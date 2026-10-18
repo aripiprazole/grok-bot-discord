@@ -43,7 +43,9 @@ export class Waker {
     if (!pending) return false;
     this.lastFiredAt = this.now();
     try {
-      const res = await this.fetchImpl(webhook.url, {
+      // Call fetch unbound: Workers throw "Illegal invocation" when fetch runs with `this` set to another object.
+      const doFetch = this.fetchImpl;
+      const res = await doFetch(webhook.url, {
         method: "POST",
         headers: { Authorization: `Bearer ${webhook.key}`, "Content-Type": "application/json" },
         body: JSON.stringify({

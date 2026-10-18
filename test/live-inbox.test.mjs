@@ -182,3 +182,18 @@ test("agent mode: DMs reply in place and can be skipped", async () => {
   assert.equal(await agentInbox.skip({ itemId: next }), "Skipped DM with ANA.");
   assert.equal(dm.sent.length, 1);
 });
+
+test("waker calls fetch unbound (Workers throw Illegal invocation otherwise)", async () => {
+  let seenThis = "unset";
+  const waker = new Waker({
+    getWebhook: () => ({ url: "https://x.y/automations/webhook/r", key: "k" }),
+    pending: () => 1,
+    fetchImpl: function (_url, _init) {
+      seenThis = this;
+      return Promise.resolve(new Response("", { status: 200 }));
+    },
+    log: { warn() {} },
+  });
+  assert.equal(await waker.fire(), true);
+  assert.notEqual(seenThis, waker);
+});
