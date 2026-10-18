@@ -146,7 +146,7 @@ On the Workers Free plan, deploy with `wrangler.novoice.jsonc`: the same Worker 
 npx wrangler deploy --config ../wrangler.novoice.jsonc
 ```
 
-`GATEWAY_ENABLED` (a var, default `true`) controls the Discord gateway connection. With `"false"` (the default in `wrangler.novoice.jsonc`), neither the cron nor MCP calls open the gateway, and REST tools still work. Use that while another process runs the same bot token. Set it to `"true"` and redeploy to cut over. To add voice later, upgrade to Workers Paid and deploy with `wrangler.jsonc` from a machine with Docker. Wrangler builds `voice.Dockerfile` and pushes it to Cloudflare's registry.
+`GATEWAY_ENABLED` (a var, default `true`) controls the Discord gateway connection. With `"false"`, neither the cron nor MCP calls open the gateway, and REST tools still work. Use that while another process runs the same bot token. Set it to `"true"` and redeploy to cut over. To add voice later, upgrade to Workers Paid and deploy with `wrangler.jsonc` from a machine with Docker. Wrangler builds `voice.Dockerfile` and pushes it to Cloudflare's registry.
 
 From `cloudflare/`, `npm run deploy:novoice` and `npm run check:novoice` use that config. `npm run check:novoice` is a dry run and does not need Docker.
 

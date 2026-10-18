@@ -2,9 +2,9 @@
 // Workers Free plan (Containers need Workers Paid). Voice tools report
 // "Voice hosting isn't configured." To add voice later, deploy with wrangler.jsonc.
 //
-// GATEWAY_ENABLED=false keeps the Durable Object off the Discord gateway, so it
+// GATEWAY_ENABLED="false" keeps the Durable Object off the Discord gateway, so it
 // can't fight another process (e.g. the box daemon) running the same bot token.
-// REST tools over /mcp still work. Flip it to "true" and redeploy to cut over.
+// REST tools over /mcp still work. It is "true" here: this Worker owns the gateway.
 {
   "$schema": "./cloudflare/node_modules/wrangler/config-schema.json",
   "name": "grok-bot-discord",
@@ -21,7 +21,7 @@
   },
   "vars": {
     "REPLY_MODE": "agent",
-    "GATEWAY_ENABLED": "false"
+    "GATEWAY_ENABLED": "true"
   },
   "durable_objects": {
     "bindings": [
