@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1 — 2026-10-18
+
+- **Voice survives restarts.** The Cloudflare bot saves who is in each voice channel. After a deploy the gateway resumes without replaying GUILD_CREATE, so the bot used to think every call was empty and left right after joining. With no saved voice states it no longer guesses that everyone left, and `/join` asks Discord where you are.
+
 ## 0.5.0 — 2026-10-18
 
 - **Voice is transcription + speech only.** Calls no longer run an ElevenLabs conversational agent. Each speaker is transcribed in real time with ElevenLabs Scribe v2 Realtime (with per-utterance language detection), finished utterances go to the routine webhook as `source: discord-voice` with speaker and language, and the agent answers with `say_in_voice_call`, spoken by ElevenLabs text-to-speech (`eleven_flash_v2_5`, multilingual). `ELEVENLABS_AGENT_ID` and the `ask_agent` tool are gone; `ELEVENLABS_TTS_MODEL` is new. `say_in_voice_call` takes an optional `language`.

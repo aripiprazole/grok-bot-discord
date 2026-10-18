@@ -217,6 +217,28 @@ test("joining voice emits a start effect and say speaks into that call", async (
   assert.equal(effects.at(-1).type, "voice_stop");
 });
 
+test("a resumed session keeps voice states, and a cold cache never ends a call as empty", async () => {
+  const client = fakeClient();
+  const first = bot(client);
+  await online(client, first.bot);
+  const saved = JSON.parse(JSON.stringify(first.bot.snapshot()));
+
+  // Restart with the saved state: the gateway resumes, so no GUILD_CREATE arrives.
+  const warm = bot(client);
+  warm.bot.restore(saved);
+  await warm.bot.handle("join", { channelId: VOICE });
+  await warm.bot.dispatch("VOICE_STATE_UPDATE", { guild_id: GUILD, user_id: BOT, channel_id: VOICE });
+  assert.equal(warm.effects.some((e) => e.type === "voice_stop"), false, "Ana is still known to be in the call");
+
+  // Older state without voice states: don't guess that everyone left.
+  const { voiceStates, ...old } = saved;
+  const cold = bot(client);
+  cold.bot.restore(old);
+  await cold.bot.handle("join", { channelId: VOICE });
+  await cold.bot.dispatch("VOICE_STATE_UPDATE", { guild_id: GUILD, user_id: BOT, channel_id: VOICE });
+  assert.equal(cold.effects.some((e) => e.type === "voice_stop"), false);
+});
+
 test("fly voice can join when the ElevenLabs key lives on the voice host", async () => {
   const client = fakeClient();
   const { bot: created, effects } = bot(client, { ELEVENLABS_API_KEY: "" }, { requireElevenKey: false });

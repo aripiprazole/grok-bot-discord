@@ -44,6 +44,9 @@ export function createCloudBot({
   const guilds = new Map();
   const channels = new Map();
   const voiceStates = new Map();
+  // Guilds whose voice states we've seen in full (GUILD_CREATE, or restored from storage). A resumed
+  // gateway session never replays GUILD_CREATE, so without this a restart forgets who is in a call.
+  const voiceKnown = new Set();
   const calls = new Map();
   const followed = new Set();
   const typing = new Map();
@@ -325,9 +328,20 @@ export function createCloudBot({
     await postChunks(channel.id, text, replyTo);
   }
 
+  // Who's in a voice channel by user, asking Discord when our cache is cold.
+  async function voiceChannelOf(guildId, userId) {
+    const cached = voiceStates.get(guildId)?.get(userId);
+    if (cached || voiceKnown.has(guildId) || !rest) return cached ?? null;
+    const state = await rest.get(`/guilds/${guildId}/voice-states/${userId}`).catch(() => null);
+    if (state?.channel_id) setVoiceState(guildId, userId, state.channel_id);
+    return state?.channel_id ?? null;
+  }
+
   async function maybeLeave(guildId) {
     const call = calls.get(guildId);
     if (!call) return;
+    // Don't decide the call is empty from a cache that was never filled.
+    if (!voiceKnown.has(guildId)) return;
     const people = humansIn(guildId, call.channelId);
     if (!people.length) await endCall(guildId, "Everyone left, so I did too.");
     else if (call.listen === "me" && call.hostId && !people.includes(call.hostId)) await endCall(guildId, "The person I was listening to left the call.");
@@ -386,7 +400,7 @@ export function createCloudBot({
       await editInteraction(data, left ? "👋 Left the voice channel." : "I'm not in a voice channel.");
       return;
     }
-    const channelId = voiceStates.get(data.guild_id)?.get(user.id);
+    const channelId = await voiceChannelOf(data.guild_id, user.id);
     if (!channelId) return deny("Join a voice channel first, then run `/join`.");
     const listen = data.data?.options?.find((o) => o.name === "listen")?.value ?? "everyone";
     await rest.post(`/interactions/${data.id}/${data.token}/callback`, { type: 5 });
@@ -535,7 +549,9 @@ export function createCloudBot({
         for (const channel of data.threads ?? []) rememberChannel(channel, data);
         for (const role of data.roles ?? []) roles.set(role.id, role.name);
         for (const member of data.members ?? []) rememberName(data.id, member.user, member);
+        voiceStates.set(data.id, new Map());
         for (const state of data.voice_states ?? []) setVoiceState(data.id, state.user_id, state.channel_id);
+        voiceKnown.add(data.id);
         break;
       case "GUILD_DELETE":
         guilds.delete(data.id);
@@ -821,6 +837,7 @@ export function createCloudBot({
         tracked: [...tracked].slice(-500),
         revisions: [...revisions.values()].slice(-REVISION_CAP),
         calls: [...calls.values()],
+        voiceStates: [...voiceKnown].map((guildId) => [guildId, [...(voiceStates.get(guildId) ?? new Map())]]),
         me,
         applicationId,
         startedAt,
@@ -841,6 +858,10 @@ export function createCloudBot({
       for (const guild of state.guilds ?? []) guilds.set(guild.id, guild);
       for (const channel of state.channels ?? []) channels.set(channel.id, channel);
       for (const call of state.calls ?? []) calls.set(call.guildId, call);
+      for (const [guildId, entries] of state.voiceStates ?? []) {
+        voiceStates.set(guildId, new Map(entries));
+        voiceKnown.add(guildId);
+      }
     },
   };
 }
