@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createCloudBot } from "../server/cloud/bot.mjs";
+import { createCloudBot, withoutVoiceHost } from "../server/cloud/bot.mjs";
 import { loadLiveConfig } from "../server/live/config.mjs";
 import { buildEmbeds, buildPoll, richFields } from "../server/cloud/rich.mjs";
 
@@ -40,7 +40,7 @@ function fakeClient() {
   return client;
 }
 
-function bot(client, env = {}) {
+function bot(client, env = {}, options = {}) {
   const effects = [];
   const config = loadLiveConfig({
     DISCORD_BOT_TOKEN: "token",
@@ -55,6 +55,7 @@ function bot(client, env = {}) {
     log: { info() {}, warn() {}, error() {} },
     fetchImpl: async () => new Response("ok"),
     onEffects: async (batch) => effects.push(...batch),
+    ...options,
   });
   return { bot: created, effects };
 }
@@ -162,6 +163,23 @@ test("joining voice emits a start effect and say speaks into that call", async (
   assert.equal(effects.at(-1).type, "voice_stop");
 });
 
+test("fly voice can join when the ElevenLabs key lives on the voice host", async () => {
+  const client = fakeClient();
+  const { bot: created, effects } = bot(client, { ELEVENLABS_API_KEY: "" }, { requireElevenKey: false });
+  await online(client, created);
+  const text = await created.handle("join", { channelId: VOICE });
+  assert.match(text, /Joined 🔊 Talk in Team/);
+  assert.equal(effects.at(-1).type, "voice_start");
+  assert.equal(effects.at(-1).spec.guildId, GUILD);
+});
+
+test("voice join still requires the ElevenLabs key when the Worker supplies it", async () => {
+  const client = fakeClient();
+  const { bot: created } = bot(client, { ELEVENLABS_API_KEY: "" });
+  await online(client, created);
+  await assert.rejects(() => created.handle("join", { channelId: VOICE }), /ELEVENLABS_API_KEY/);
+});
+
 test("rich send payload builds an embed, buttons, a select menu, and a poll", () => {
   const fields = richFields({
     embeds: [{ title: "Ship", description: "Monday", color: "#336699", fields: [{ name: "PR", value: "42", inline: true }] }],
@@ -177,4 +195,15 @@ test("rich send payload builds an embed, buttons, a select menu, and a poll", ()
   assert.equal(fields.components[1].components[0].type, 3);
   assert.equal(buildPoll({ question: "Q", answers: ["A"] }).duration, 24);
   assert.equal(buildEmbeds([{ title: "T" }])[0].title, "T");
+});
+
+test("a missing voice host is not reported as a missing ElevenLabs key", () => {
+  const withKey = { voiceEnabled: true, persona: true };
+  assert.deepEqual(withoutVoiceHost(withKey), {
+    voiceEnabled: false,
+    persona: true,
+    voiceUnavailable: "the voice host isn't deployed",
+  });
+  const missingKey = { voiceEnabled: false };
+  assert.equal(withoutVoiceHost(missingKey), missingKey);
 });

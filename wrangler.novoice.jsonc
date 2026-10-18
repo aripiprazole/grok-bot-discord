@@ -1,0 +1,36 @@
+// Same Worker as wrangler.jsonc, minus the voice container, for accounts on the
+// Workers Free plan (Containers need Workers Paid). Voice runs on Fly.io when
+// the secrets VOICE_HOST_URL and VOICE_HOST_SECRET are set. Without them, voice
+// tools report "Voice hosting isn't configured." wrangler.jsonc remains the
+// Cloudflare Containers path.
+//
+// GATEWAY_ENABLED="false" keeps the Durable Object off the Discord gateway, so it
+// can't fight another process (e.g. the box daemon) running the same bot token.
+// REST tools over /mcp still work. It is "true" here: this Worker owns the gateway.
+{
+  "$schema": "./cloudflare/node_modules/wrangler/config-schema.json",
+  "name": "grok-bot-discord",
+  "main": "cloudflare/src/index.js",
+  "compatibility_date": "2026-10-18",
+  "compatibility_flags": ["nodejs_compat"],
+  "upload_source_maps": true,
+  "observability": {
+    "enabled": true,
+    "traces": { "enabled": true }
+  },
+  "triggers": {
+    "crons": ["* * * * *"]
+  },
+  "vars": {
+    "REPLY_MODE": "agent",
+    "GATEWAY_ENABLED": "true"
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "DISCORD_GATEWAY", "class_name": "DiscordGateway" }
+    ]
+  },
+  "exports": {
+    "DiscordGateway": { "type": "durable-object", "storage": "sqlite" }
+  }
+}
