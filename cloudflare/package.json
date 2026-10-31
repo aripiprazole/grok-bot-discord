@@ -10,6 +10,6 @@
     "check:novoice": "wrangler deploy --dry-run --config ../wrangler.novoice.jsonc"
   },
   "devDependencies": {
-    "wrangler": "^4.45.0"
+    "wrangler": "^4.156.0"
   }
 }
