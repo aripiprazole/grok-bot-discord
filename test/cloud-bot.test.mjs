@@ -6,6 +6,7 @@ import { buildEmbeds, buildPoll, richFields } from "../server/cloud/rich.mjs";
 
 const GUILD = "100000000000000001";
 const GENERAL = "100000000000000002";
+const SINAGOGA = "1524200246501048402";
 const VOICE = "100000000000000003";
 const BOT = "900000000000000000";
 
@@ -271,6 +272,87 @@ test("rich send payload builds an embed, buttons, a select menu, and a poll", ()
   assert.equal(fields.components[1].components[0].type, 3);
   assert.equal(buildPoll({ question: "Q", answers: ["A"] }).duration, 24);
   assert.equal(buildEmbeds([{ title: "T" }])[0].title, "T");
+});
+
+
+test("listen channels queue ambient messages and debounce the wake; a ping wakes right away", async () => {
+  const client = fakeClient();
+  let now = 1_000_000;
+  const timers = new Map();
+  let nextId = 1;
+  // Inject a clock and timers through a custom Waker by patching after create — easier: pass now into createCloudBot
+  // and rely on the real Waker with mocked timers via monkeypatching Date is messy. Drive through notify kinds by
+  // inspecting the inbox and calling waker methods with a replaced timer API.
+  const { bot: created } = bot(client, { LISTEN_CHANNEL_IDS: SINAGOGA });
+  // Swap the waker's clock/timers for a controllable one.
+  const calls = [];
+  const waker = created.waker;
+  waker.now = () => now;
+  waker.setTimer = (fn, ms) => { const id = nextId++; timers.set(id, { fn, due: now + ms }); return id; };
+  waker.clearTimer = (id) => timers.delete(id);
+  waker.fetchImpl = async (_url, init) => { calls.push(JSON.parse(init.body)); return new Response(null, { status: 202 }); };
+
+  await online(client, created);
+  // GUILD_CREATE in online() doesn't include sinagoga — remember it.
+  await created.dispatch("CHANNEL_CREATE", { id: SINAGOGA, name: "sinagoga", type: 0, guild_id: GUILD });
+
+  await created.dispatch("MESSAGE_CREATE", {
+    id: "500000000000000001",
+    type: 0,
+    channel_id: SINAGOGA,
+    guild_id: GUILD,
+    timestamp: "2026-11-09T12:00:00.000Z",
+    content: "alguém viu o deploy?",
+    author: { id: "111111111111111111", username: "ana", global_name: "Ana" },
+    mentions: [],
+  });
+  await created.dispatch("MESSAGE_CREATE", {
+    id: "500000000000000002",
+    type: 0,
+    channel_id: SINAGOGA,
+    guild_id: GUILD,
+    timestamp: "2026-11-09T12:00:10.000Z",
+    content: "eu vi",
+    author: { id: "222222222222222222", username: "bo", global_name: "Bo" },
+    mentions: [],
+  });
+
+  assert.equal(created.inbox.items.length, 1, "ambient messages merge into one item");
+  assert.equal(created.inbox.items[0].ambient, true);
+  assert.equal(created.inbox.items[0].kind, "listen");
+  assert.equal(created.inbox.items[0].messages.length, 2);
+  assert.equal(client.calls.some((c) => c.method === "PUT" && c.path.includes("/reactions/")), false, "no 👀 on ambient");
+  assert.ok(waker.ambientPending());
+  assert.equal(calls.length, 0, "ambient does not wake immediately");
+
+  // A ping in the same channel is urgent and cancels the ambient wait.
+  await created.dispatch("MESSAGE_CREATE", {
+    id: "500000000000000003",
+    type: 0,
+    channel_id: SINAGOGA,
+    guild_id: GUILD,
+    timestamp: "2026-11-09T12:00:20.000Z",
+    content: `<@${BOT}> resume o canal`,
+    author: { id: "111111111111111111", username: "ana", global_name: "Ana" },
+    mentions: [{ id: BOT, username: "Nova" }],
+  });
+  assert.equal(created.inbox.items.length, 2);
+  assert.equal(created.inbox.items[1].ambient, undefined);
+  assert.ok(waker.urgentTimer);
+  assert.equal(waker.ambient, null);
+
+  now += 3_000;
+  for (const t of [...timers.values()]) if (t.due <= now) t.fn();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0].pending >= 2);
+  assert.match(calls[0].message, /listen channels|ping/i);
+});
+
+test("loadLiveConfig reads LISTEN_CHANNEL_IDS for the Worker vars path", () => {
+  const config = loadLiveConfig({ LISTEN_CHANNEL_IDS: "1524200246501048402, 999" });
+  assert.ok(config.listenChannelIds.has("1524200246501048402"));
+  assert.ok(config.listenChannelIds.has("999"));
 });
 
 test("a missing voice host is not reported as a missing ElevenLabs key", () => {

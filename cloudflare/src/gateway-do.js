@@ -90,8 +90,14 @@ export class DiscordGateway extends DurableObject {
       requireElevenKey: voiceHosting(this.env) !== "fly",
     });
     this.bot.restore(stored.bot ?? {});
-    // Items still waiting from before a restart or deploy get one wake-up, as if they had just arrived.
-    if (this.bot.inbox.waiting().count) this.bot.waker.notify();
+    // Items left over from a restart: pings fire right away (and cancel ambient debounce);
+    // ambient-only leftovers keep their deferred wake.
+    if (this.bot.inbox.waiting().count) {
+      const urgentLeft = this.bot.inbox.items.some((item) => !item.ambient && !this.bot.inbox.isClaimed(item));
+      if (urgentLeft) this.bot.waker.notify({ kind: "urgent" });
+      else if (this.bot.waker.ambientPending()) this.bot.waker.armAmbientTimer();
+      else this.bot.waker.notify({ kind: "urgent" });
+    }
     this.session = new GatewaySession({
       token: config.token,
       onSend: (payload) => this.sendGateway(payload),
@@ -188,6 +194,9 @@ export class DiscordGateway extends DurableObject {
   async alarm() {
     await this.ensureConnected();
     for (const guildId of this.sockets.keys()) this.keepVoice(guildId);
+    // Free-plan Durable Objects may hibernate timers; the 30s alarm backs ambient debounce.
+    this.bot?.waker?.tick();
+    this.persist();
   }
 
   async handle(method, params) {

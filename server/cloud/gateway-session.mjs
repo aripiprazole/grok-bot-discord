@@ -1,6 +1,6 @@
 // Discord gateway session: identify, resume, heartbeat, and voice-state updates.
 // The socket itself lives in the caller (a Durable Object, or a test).
-
+// Intents: Guilds | GuildVoiceStates | GuildMessages | DirectMessages | MessageContent.
 export const GATEWAY_INTENTS = (1 << 0) | (1 << 7) | (1 << 9) | (1 << 12) | (1 << 15);
 export const GATEWAY_URL = "wss://gateway.discord.gg/?v=10&encoding=json";
 export const FATAL_CLOSE_CODES = new Set([4004, 4010, 4011, 4012, 4013, 4014]);
