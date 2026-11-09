@@ -47,7 +47,7 @@ export async function startGateway({ config, dataDir, log }) {
   const followedThreads = new Set();
   const inbox = new Inbox({ file: join(dataDir, "inbox.json") });
   const waker = new Waker({ getWebhook, pending: () => inbox.waiting().count, log });
-  const agentInbox = createAgentInbox({ client, inbox, followedThreads, onNewMessage: () => waker.notify(), log });
+  const agentInbox = createAgentInbox({ client, inbox, followedThreads, onNewMessage: (opts) => waker.notify(opts), log });
   const rewake = setInterval(() => {
     if (inbox.waiting().oldestMs > REWAKE_AFTER_MS && Date.now() - waker.lastFiredAt > REWAKE_SPACING_MS) waker.notify();
   }, REWAKE_AFTER_MS);

@@ -8,7 +8,7 @@ import { createAgentInbox } from "../server/live/agent-inbox.mjs";
 import { createChatHandler } from "../server/live/chat.mjs";
 import { loadLiveConfig } from "../server/live/config.mjs";
 import { Inbox, LEASE_MS, MAX_AGE_MS } from "../server/live/inbox.mjs";
-import { Waker, checkWebhook } from "../server/live/waker.mjs";
+import { AMBIENT_IDLE_MS, AMBIENT_MAX_MS, Waker, ambientDueAt, checkWebhook, wakeMessage } from "../server/live/waker.mjs";
 
 const clock = (t = 1_000_000) => ({ t, now() { return this.t; } });
 const msg = (id, extra = {}) => ({ id, authorId: "u1", authorName: "Ana", username: "ana", content: `hi ${id}`, attachments: [], at: "2026-10-17T14:03:00.000Z", url: `https://discord.com/channels/g/c/${id}`, ...extra });
@@ -65,7 +65,7 @@ test("waker batches bursts, posts with the key, and spaces out wake-ups", async 
   waker.notify();
   waker.notify();
   assert.ok(waker.timer, "one scheduled wake-up for a burst");
-  clearTimeout(waker.timer);
+  clearTimeout(waker.urgentTimer);
 
   pending = 0;
   assert.equal(await waker.fire(), false, "nothing waiting, no wake-up");
@@ -74,6 +74,109 @@ test("waker batches bursts, posts with the key, and spaces out wake-ups", async 
   assert.equal(await failing.fire(), false);
   assert.match(failing.status().lastError, /HTTP 401/);
   assert.deepEqual(new Waker({ getWebhook: () => null, pending: () => 1 }).status(), { connected: false });
+});
+
+test("ambient wakes wait for quiet (or the max), and an urgent wake cancels them", async () => {
+  let now = 1_000_000;
+  const timers = new Map();
+  let nextId = 1;
+  const setTimer = (fn, ms) => {
+    const id = nextId++;
+    timers.set(id, { fn, due: now + ms });
+    return id;
+  };
+  const clearTimer = (id) => timers.delete(id);
+  const calls = [];
+  const waker = new Waker({
+    getWebhook: () => ({ url: "https://api.cursor.com/automations/webhook/r1", key: "secret" }),
+    pending: () => 3,
+    pendingDetail: () => ({ ambient: 3, urgent: 0, places: ["#sinagoga (canudinhos)"] }),
+    fetchImpl: async (_url, init) => {
+      calls.push(JSON.parse(init.body));
+      return new Response(null, { status: 202 });
+    },
+    now: () => now,
+    setTimer,
+    clearTimer,
+    log: { warn() {} },
+  });
+
+  waker.notify({ kind: "ambient" });
+  assert.equal(timers.size, 1);
+  assert.equal(ambientDueAt(waker.ambient), now + AMBIENT_IDLE_MS);
+
+  // More chatter resets the idle clock but not the max.
+  now += 20_000;
+  waker.notify({ kind: "ambient" });
+  assert.equal(ambientDueAt(waker.ambient), Math.min(waker.ambient.lastAt + AMBIENT_IDLE_MS, waker.ambient.firstAt + AMBIENT_MAX_MS));
+  assert.equal(waker.ambient.firstAt, 1_000_000);
+
+  // Continuous chatter for the max window: due is firstAt + max.
+  now = 1_000_000 + AMBIENT_MAX_MS - 1_000;
+  waker.notify({ kind: "ambient" });
+  assert.equal(ambientDueAt(waker.ambient), 1_000_000 + AMBIENT_MAX_MS);
+
+  // A ping cancels ambient and schedules an urgent wake.
+  waker.notify({ kind: "urgent" });
+  assert.equal(waker.ambient, null);
+  assert.ok(waker.urgentTimer);
+  assert.equal(waker.ambientTimer, null);
+
+  // Run the urgent timer.
+  now += 3_000;
+  for (const t of [...timers.values()]) if (t.due <= now) t.fn();
+  timers.clear();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].pending, 3);
+  assert.equal(calls[0].detail.ambient, 3);
+  assert.match(calls[0].message, /listen channels/);
+  assert.equal(wakeMessage(2, { ambient: 2, urgent: 0 }).includes("nobody pinged"), true);
+  assert.equal(wakeMessage(3, { ambient: 2, urgent: 1 }).includes("1 ping"), true);
+});
+
+test("ambient schedule survives snapshot/restore and tick fires when due", async () => {
+  let now = 5_000_000;
+  const timers = new Map();
+  let nextId = 1;
+  const waker = new Waker({
+    getWebhook: () => ({ url: "https://api.cursor.com/automations/webhook/r1", key: "k" }),
+    pending: () => 1,
+    pendingDetail: () => ({ ambient: 1, urgent: 0, places: ["#sinagoga"] }),
+    fetchImpl: async () => new Response(null, { status: 202 }),
+    now: () => now,
+    setTimer: (fn, ms) => {
+      const id = nextId++;
+      timers.set(id, { fn, due: now + ms });
+      return id;
+    },
+    clearTimer: (id) => timers.delete(id),
+    log: { warn() {} },
+  });
+  waker.notify({ kind: "ambient" });
+  const snap = waker.snapshot();
+  assert.equal(snap.ambient.firstAt, 5_000_000);
+
+  const restored = new Waker({
+    getWebhook: () => ({ url: "https://api.cursor.com/automations/webhook/r1", key: "k" }),
+    pending: () => 1,
+    fetchImpl: async (_u, init) => {
+      timers.set("fired", JSON.parse(init.body));
+      return new Response(null, { status: 202 });
+    },
+    now: () => now,
+    setTimer: (fn, ms) => {
+      const id = nextId++;
+      timers.set(id, { fn, due: now + ms });
+      return id;
+    },
+    clearTimer: (id) => timers.delete(id),
+    log: { warn() {} },
+  });
+  restored.restore(snap);
+  assert.ok(restored.ambientPending());
+  now = ambientDueAt(restored.ambient);
+  restored.tick();
+  assert.equal(timers.get("fired")?.pending, 1);
 });
 
 // Minimal discord.js stand-ins.

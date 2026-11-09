@@ -49,7 +49,7 @@ Prefer instant, memory-less replies? Set `REPLY_MODE=instant` and an xAI key, an
 | `ROUTINE_WEBHOOK_URL`, `ROUTINE_WEBHOOK_KEY` | no | Your wake-up routine's webhook. The agent can also save these itself with `connect_discord_routine`. |
 | `ALLOWED_IDS` | no | Comma-separated Discord user or role IDs allowed to talk to the bot. Leave it empty to allow everyone. |
 | `ALLOWED_CHANNEL_IDS` | no | Channels the bot works in. It ignores other server channels; threads count by their parent channel, and DMs aren't affected. |
-| `LISTEN_CHANNEL_IDS` | no | Channels where every message reaches the agent, not only @mentions |
+| `LISTEN_CHANNEL_IDS` | no | Channels where every message reaches the agent, not only @mentions. Ambient chatter (no ping) is merged per channel and wakes the routine after ~45s of quiet (max ~3 min); pings still wake right away. On Cloudflare this is a Worker var (see `wrangler*.jsonc`). |
 | `DISCORD_DEFAULT_CHANNEL_ID` | no | Where the agent posts when you don't name a channel |
 
 ## Without the marketplace (personal Grok Bots, any agent with a shell)

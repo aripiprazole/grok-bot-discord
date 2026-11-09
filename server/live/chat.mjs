@@ -142,7 +142,14 @@ export function createChatHandler({ client, config, grok, agentInbox, followedTh
       if (mode !== "thread" || message.mentions.users.has(me)) await message.react("🔒").catch(() => {});
       return;
     }
-    if (agentInbox) return agentInbox.enqueue(message, mode);
+    if (agentInbox) {
+      const mentionsBot = message.mentions.users.has(me) || message.mentions.repliedUser?.id === me;
+      const listenHit =
+        config.listenChannelIds.has(channel.id) ||
+        (channel.parentId != null && config.listenChannelIds.has(channel.parentId));
+      const ambient = Boolean(listenHit && !mentionsBot && mode !== "dm");
+      return agentInbox.enqueue(message, mode, { ambient });
+    }
     await enqueue(mode === "channel" ? message.id : channel.id, () => respondInstantly(message, mode));
   };
 }

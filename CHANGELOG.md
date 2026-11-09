@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.2 — 2026-11-09
+
+- **Listen channels with ambient debounce.** `LISTEN_CHANNEL_IDS` (now set on the Cloudflare Worker vars, including `#sinagoga`) queues every message, not only @mentions. Chatter with no ping is marked ambient, merged per channel, skips the 👀 reaction, and wakes the routine webhook after ~45s of quiet (or ~3 min of continuous talk). Mentions, DMs, replies and components still wake right away and cancel the ambient wait. Ambient schedule survives Durable Object restarts; the 30s DO alarm backs the timer.
+
 ## 0.5.1 — 2026-10-18
 
 - **Voice survives restarts.** The Cloudflare bot saves who is in each voice channel. After a deploy the gateway resumes without replaying GUILD_CREATE, so the bot used to think every call was empty and left right after joining. With no saved voice states it no longer guesses that everyone left, and `/join` asks Discord where you are.

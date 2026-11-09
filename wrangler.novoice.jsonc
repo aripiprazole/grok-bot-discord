@@ -23,7 +23,8 @@
   },
   "vars": {
     "REPLY_MODE": "agent",
-    "GATEWAY_ENABLED": "true"
+    "GATEWAY_ENABLED": "true",
+    "LISTEN_CHANNEL_IDS": "1524200246501048402"
   },
   "durable_objects": {
     "bindings": [
